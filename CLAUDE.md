@@ -1,0 +1,98 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+@AGENTS.md
+
+## Source of truth
+
+The game design document `football-puzzle-battle-gdd-v0.4.md` (written in Turkish) is the spec. It states that every decision needed to begin development has been made, so implement from it rather than re-opening design questions. Section numbers below (§) refer to that document.
+
+## Commands
+
+```bash
+npm run dev     # dev server at http://localhost:3000
+npm run build   # production build (also type-checks)
+npm run lint    # ESLint
+npm test        # Vitest, all tests once
+npm run test:watch
+npx vitest run src/game/round.test.ts        # one file
+npx vitest run -t "sudden death"             # tests whose name matches
+```
+
+Tests live next to the code as `*.test.ts` (`src/game/`, `src/data/`) and run in Node; config is `vitest.config.mts`. Engine tests use fixtures in `src/game/__fixtures__/` (a fixed puzzle and a seeded RNG), not the content in `src/data/`. `src/data/puzzles.test.ts` validates every puzzle record, so new content that cannot fill 5 reveals or rejects its own aliases fails there.
+
+## Stack (§33)
+
+Next.js 16 (App Router, `src/app`) + React 19 + TypeScript + Tailwind CSS v4. Supabase (PostgreSQL, Realtime), Vercel and Capacitor come later. Mobile-first layout at a 390px reference width.
+
+Tailwind v4 has no `tailwind.config` file: the §22 design tokens live in the `@theme` block of `src/app/globals.css`, named exactly as in the GDD (so utilities read `bg-bg-primary`, `border-border-subtle`, `text-text-secondary`, `bg-accent`). Fonts are loaded with `next/font/google` in `src/app/layout.tsx` and exposed as `font-display` (Space Grotesk) and `font-body` (Manrope, the body default).
+
+## Architecture
+
+Three layers, each depending only on the one below:
+
+1. **Round engine** (`src/game/round.ts`, `scoring.ts`, `answer.ts`, `bot.ts`): pure TypeScript, no React or timers, so it can later run server-side (§27). `round.ts` is a reducer (`tick` / `buzz` / `submit` / `reset`) for one REVEAL → BUZZ → ANSWER round. It knows nothing about puzzle types: it only reads `reveal_interval_seconds`, `correct_answer`, `answer_aliases`, `difficulty` and `bot_difficulty`. Treat it as stable; the user asked that it not change when adding puzzle types.
+2. **Match layer** (`src/game/match.ts`): the 5-round schedule in §5 order, totals, Sudden Death and §12 stats. It wraps the engine instead of changing it: `observedRoundReducer` records buzz times and which side was right first, which the engine does not track.
+3. **UI** (`src/components/`): `puzzles/` has one board per type behind `PuzzleBoard`, which switches on `puzzle.type` and renders a reveal stage (1-5). `match/` has the screens. `MatchScreen` owns the match state and remounts `RoundPlay` with a new `key` for every round.
+
+Rules that live outside the engine and are easy to miss:
+
+- Round timing: one shared reveal clock. Any buzz freezes it while that side answers, and answering is exclusive. A wrong answer, a correct one or the 8 s timeout ends only that side's round, so both sides can score in the same round (§39). A regular round ends when both sides are done or the 15 s window runs out.
+- Sudden Death (§12.1) ends at the first correct answer, and `match.ts` detects this. Its points never count toward the totals, and the UI hides point values during it. It prefers an unplayed puzzle and falls back to the whole pool.
+- `src/components/match/useRound.ts` is the only place wall-clock time enters. It dispatches `tick` every 50 ms, with each step clamped so background tabs pause the round instead of skipping reveals.
+- `MatchScreen` waits `NEXT_ROUND_DELAY_MS` on the round result, which is longer than §11's "about 2 s", and a tap skips it.
+
+## Adding a puzzle type or puzzle content
+
+- A new type means a `reveal_data` shape in `src/game/types.ts` (added to the `Puzzle` union), a board in `src/components/puzzles/`, cases in `PuzzleBoard` / `PuzzleRecap`, and a case in `revealCapacity` in `src/data/puzzles.test.ts`. The engine does not change.
+- `src/data/puzzles.ts` stands in for the puzzle table. Records use the §24 snake_case field names so they can move to Supabase unchanged. It holds one sample per type, and the schedule takes the first published puzzle of each type.
+- Photo Reveal currently draws a parametrised SVG placeholder (`Illustration` in `PhotoRevealBoard.tsx`), not final art. The commissioned illustrations are a separate work package (§9.2.1).
+
+## Progress
+
+Built so far: the Main Menu and a full MVP 0.1 match at `/match`, which PLAY opens. It has 5 rounds against a Medium bot with one puzzle of each type, round results, the match result with Sudden Death, and rematch. Not built yet: the 50-puzzle content pool (§30), final Photo Reveal art, sounds (§23), practice, and how-to-play.
+
+## First milestone: MVP 0.1 (§29, §40)
+
+Local player vs a bot in the browser: PLAY, match a bot, play 5 rounds (one of each puzzle type), buzz, answer, score, see the match result. Explicitly out of scope: login, shop, rank, ads, real multiplayer. The first-prototype main menu needs only PLAY, PRACTICE, HOW TO PLAY.
+
+## Core game rules that code must enforce
+
+- **Round order (§5):** Goal Map, Photo Reveal, Missing XI, Career Journey, Teammate Web. Every type uses the same REVEAL → BUZZ → ANSWER loop.
+- **Reveal timing (§6.1):** 5 reveals, fixed 3 s apart, 15 s window per round. No buzz by 15 s means 0 points. Read the interval from the `reveal_interval_seconds` field even though it is always 3 in the MVP.
+- **Buzz (§7):** Buzzing stops the reveal and opens an answer input with about 8 s. A wrong answer forfeits that player's round, and the opponent keeps playing.
+- **Scoring (§8):** Correct at reveal 1–5 scores 1000/800/600/400/200. Wrong scores 0. No negative points in the MVP.
+- **Tie-break (§12.1):** Tied after 5 rounds triggers repeated Sudden Death rounds with a random puzzle until one player answers correctly first. Applies to bot matches too, not Practice.
+- **Answer validation (§26.1):** Exact match against the answer and `answer_aliases`, case-insensitive with whitespace and accents normalized. Fuzzy/typo tolerance is Phase 2.
+- **Bot (§29.1):** A `bot_difficulty` field (Easy/Medium/Hard) must exist from the MVP, though only Medium is required. Buzz timing is reveal 4–5 for Easy, 2–4 weighted by puzzle difficulty for Medium, 1–3 for Hard. Accuracy is 50/70/85%, with a simulated 1.5–3 s answer delay.
+- **Server authority (§27):** When real multiplayer arrives, the server owns puzzle selection, round timing, reveals, buzz time, answer checking and scoring. Structure game logic so it can move server-side and the client never decides scores.
+
+## Content (§24–25, §30)
+
+Puzzles live in the database, never hardcoded in components. Shared fields: ID, type, difficulty, question, correct answer, aliases, reveal data, competition, season, tags, status, plus `reveal_interval_seconds`, `image_source`, `license_type`, `answer_aliases`. The MVP target is 50 puzzles, 10 per type. §25 has a sample record.
+
+- **Photo Reveal (§9.2.1, §35):** Uses original illustrations only, revealed piece by piece rather than blurred. `image_source` is always `illustration`, and `license_type` is unused in the MVP. Never use real player photos or match footage.
+- **Goal Map (§34):** Rendered with SVG or Canvas on a top-down pitch, with no game engine.
+- **Missing XI (§9.3.1):** Shows cards placed by formation position on the pitch, with the missing slot as an empty "?" card in place. Reveals are contextual clues, not player names.
+
+## Visual style (§22)
+
+Use these tokens as CSS variables / Tailwind theme values:
+
+| Token | Hex |
+|---|---|
+| `bg-primary` | `#0B1220` |
+| `bg-surface` | `#121A2A` |
+| `bg-surface-alt` | `#1E2A3D` |
+| `border-subtle` | `#26344A` |
+| `accent` | `#3ED598` |
+| `accent-hover` | `#2FBF83` |
+| `text-primary` | `#F2F5F7` |
+| `text-secondary` | `#8B98A9` |
+| `text-muted` | `#6B7A8D` / `#4A5A70` |
+
+- Fonts are Space Grotesk (600/700) for display and buttons, and Manrope (400/600/800) for body. Do not use Inter, Roboto, or Arial.
+- Only the winning/active side's score uses `accent`. The opponent or passive side uses `text-secondary`.
+- The BUZZ button is the largest, most prominent element on the match screen. Cards use 12–20px radius, `bg-surface` fill, and a `border-subtle` border. Primary CTAs are filled `accent` with dark text, secondary buttons are outlined, and tertiary actions are ghost style.
+- Approved mockups of the main menu, match, round result, and match result screens are at https://claude.ai/artifact/1X7aVnxrTpDmTSWTYj4DYP. Check them before building UI.
