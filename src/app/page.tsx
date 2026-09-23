@@ -1,5 +1,5 @@
 // Main Menu — GDD §21 (first prototype: PLAY, PRACTICE, HOW TO PLAY) styled per §22.
-// PLAY opens the (single-round) match; PRACTICE and HOW TO PLAY are still inert.
+// PLAY opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
 
 import Link from "next/link";
 

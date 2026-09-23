@@ -1,10 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   advance,
-  buildSchedule,
   createMatch,
   decidedWinner,
   recordRound,
@@ -83,8 +82,18 @@ function nextLabel(match: MatchState): string {
 }
 
 /** Match screen (§10): 5 rounds in §5 order, round results, then the match result. */
-export function MatchScreen({ pool }: { pool: Puzzle[] }) {
-  const [match, setMatch] = useState(() => createMatch(buildSchedule(pool)));
+export function MatchScreen({
+  pool,
+  initialSchedule,
+  drawSchedule,
+}: {
+  pool: Puzzle[];
+  initialSchedule: Puzzle[];
+  /** Server Function: each match's puzzles are drawn on the server. */
+  drawSchedule: () => Promise<Puzzle[]>;
+}) {
+  const [match, setMatch] = useState(() => createMatch(initialSchedule));
+  const drawing = useRef(false);
   // Bumped for every new round so RoundPlay remounts with a fresh engine state.
   const [roundKey, setRoundKey] = useState(0);
 
@@ -98,10 +107,17 @@ export function MatchScreen({ pool }: { pool: Puzzle[] }) {
     setRoundKey((k) => k + 1);
   }, [pool]);
 
-  const rematch = useCallback(() => {
-    setMatch(createMatch(buildSchedule(pool)));
-    setRoundKey((k) => k + 1);
-  }, [pool]);
+  const rematch = useCallback(async () => {
+    if (drawing.current) return; // ignore repeat taps while the draw is in flight
+    drawing.current = true;
+    try {
+      const schedule = await drawSchedule();
+      setMatch(createMatch(schedule));
+      setRoundKey((k) => k + 1);
+    } finally {
+      drawing.current = false;
+    }
+  }, [drawSchedule]);
 
   useEffect(() => {
     if (match.status !== "round-result") return;

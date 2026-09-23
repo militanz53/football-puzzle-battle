@@ -35,9 +35,9 @@ export function MissingXIBoard({ puzzle, revealed }: { puzzle: MissingXIPuzzle; 
         <span className="absolute bottom-1.5 left-2 font-display text-[10px] font-semibold uppercase tracking-widest text-text-muted">
           {team}
         </span>
-        {lineup.map((slot) => (
+        {lineup.map((slot, i) => (
           <div
-            key={slot.name}
+            key={i}
             className="absolute w-[4.5rem] -translate-x-1/2 -translate-y-1/2"
             style={{ left: `${slot.x}%`, top: `${slot.y}%` }}
           >

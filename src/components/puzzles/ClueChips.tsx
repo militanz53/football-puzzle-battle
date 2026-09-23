@@ -22,7 +22,7 @@ export function ClueChips({
         const newest = at === revealed;
         return (
           <li
-            key={clue.label}
+            key={i}
             className={`rounded-xl border ${compact ? "flex items-baseline gap-1.5 px-2.5 py-1" : "px-3 py-2"} ${
               shown ? "border-border-subtle bg-bg-surface-alt" : "border-dashed border-border-subtle"
             }`}

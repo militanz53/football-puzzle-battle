@@ -46,12 +46,12 @@ Rules that live outside the engine and are easy to miss:
 ## Adding a puzzle type or puzzle content
 
 - A new type means a `reveal_data` shape in `src/game/types.ts` (added to the `Puzzle` union), a board in `src/components/puzzles/`, cases in `PuzzleBoard` / `PuzzleRecap`, and a case in `revealCapacity` in `src/data/puzzles.test.ts`. The engine does not change.
-- `src/data/puzzles.ts` stands in for the puzzle table. Records use the §24 snake_case field names so they can move to Supabase unchanged. It holds one sample per type, and the schedule takes the first published puzzle of each type.
+- `src/data/puzzles.ts` stands in for the puzzle table. Records use the §24 snake_case field names so they can move to Supabase unchanged. It holds the §30 pool (10 per type, in `src/data/content/`). `buildSchedule` draws one random published puzzle per type; `src/app/match/page.tsx` draws the first match per request (`connection()`) so the server render and hydration agree, and rematch calls the `drawSchedule` Server Function (`src/app/match/actions.ts`), so selection never happens in the browser.
 - Photo Reveal currently draws a parametrised SVG placeholder (`Illustration` in `PhotoRevealBoard.tsx`), not final art. The commissioned illustrations are a separate work package (§9.2.1).
 
 ## Progress
 
-Built so far: the Main Menu and a full MVP 0.1 match at `/match`, which PLAY opens. It has 5 rounds against a Medium bot with one puzzle of each type, round results, the match result with Sudden Death, and rematch. Not built yet: the 50-puzzle content pool (§30), final Photo Reveal art, sounds (§23), practice, and how-to-play.
+Built so far: the Main Menu and a full MVP 0.1 match at `/match`, which PLAY opens. It has 5 rounds against a Medium bot with a random puzzle of each type from the 50-puzzle pool (§30), round results, the match result with Sudden Death, and rematch. Not built yet: final Photo Reveal art, sounds (§23), practice, and how-to-play.
 
 ## First milestone: MVP 0.1 (§29, §40)
 

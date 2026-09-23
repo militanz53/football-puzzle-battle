@@ -32,7 +32,7 @@ export function PuzzleBoard({ puzzle, revealed }: { puzzle: Puzzle; revealed: nu
 const Arrowed = ({ items }: { items: string[] }) => (
   <p className="flex flex-wrap gap-x-2 gap-y-1 text-[15px] font-semibold leading-relaxed text-text-primary">
     {items.map((item, i) => (
-      <span key={item} className="whitespace-nowrap">
+      <span key={i} className="whitespace-nowrap">
         {i > 0 && <span className="mr-2 text-text-muted">→</span>}
         {item}
       </span>

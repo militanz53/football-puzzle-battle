@@ -47,24 +47,31 @@ function finish(
 }
 
 function playRegular(results: [SideState, SideState][]): MatchState {
-  let m = createMatch(buildSchedule(PUZZLES));
+  let m = createMatch(buildSchedule(PUZZLES, rng));
   for (const [player, bot] of results) m = advance(finish(m, player, bot), PUZZLES, rng);
   return m;
 }
 
 describe("schedule (§5)", () => {
   it("plays one puzzle of each type in the GDD order", () => {
-    expect(buildSchedule(PUZZLES).map((p) => p.type)).toEqual(ROUND_ORDER);
+    expect(buildSchedule(PUZZLES, rng).map((p) => p.type)).toEqual(ROUND_ORDER);
+  });
+
+  it("draws from the whole published pool of each type", () => {
+    const draw = seeded(3);
+    const seen = new Set<string>();
+    for (let i = 0; i < 200; i++) buildSchedule(PUZZLES, draw).forEach((p) => seen.add(p.id));
+    expect(seen).toEqual(new Set(PUZZLES.filter((p) => p.status === "published").map((p) => p.id)));
   });
 
   it("fails loudly when a type has no published puzzle", () => {
-    expect(() => buildSchedule([careerPuzzle])).toThrow(/goal_map/);
+    expect(() => buildSchedule([careerPuzzle], rng)).toThrow(/goal_map/);
   });
 });
 
 describe("match flow", () => {
   it("advances through the 5 rounds in order", () => {
-    let m = createMatch(buildSchedule(PUZZLES));
+    let m = createMatch(buildSchedule(PUZZLES, rng));
     const seen = [m.current.type];
     for (let i = 0; i < 4; i++) {
       m = advance(finish(m, noBuzz, noBuzz), PUZZLES, rng);
@@ -111,7 +118,7 @@ describe("sudden death (§12.1)", () => {
 
   it("prefers a puzzle not played yet, then falls back to the whole pool", () => {
     // A 5-puzzle pool keeps this independent of how much content src/data holds.
-    const pool = buildSchedule(PUZZLES);
+    const pool = buildSchedule(PUZZLES, rng);
     const records = pool.slice(0, 4).map((puzzle) => ({ puzzle }) as RoundRecord);
     expect(pickSuddenDeathPuzzle(pool, records, rng)).toBe(pool[4]);
 
@@ -149,7 +156,7 @@ describe("observedRoundReducer", () => {
 
 describe("playerStats (§12)", () => {
   it("summarises correct answers, buzz times and the best round", () => {
-    const m0 = createMatch(buildSchedule(PUZZLES));
+    const m0 = createMatch(buildSchedule(PUZZLES, rng));
     let m = finish(m0, correct(600, 3), wrong, { playerBuzzMs: 7000 });
     m = advance(m, PUZZLES, rng);
     m = finish(m, correct(1000, 1), wrong, { playerBuzzMs: 1000 });

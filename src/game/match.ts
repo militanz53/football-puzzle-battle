@@ -92,12 +92,12 @@ export interface MatchState {
   winner: Side | null;
 }
 
-/** Picks one published puzzle per type in §5 order. */
-export function buildSchedule(pool: Puzzle[]): Puzzle[] {
+/** Picks one random published puzzle per type, in §5 order. */
+export function buildSchedule(pool: Puzzle[], rng: Rng): Puzzle[] {
   return ROUND_ORDER.map((type) => {
-    const puzzle = pool.find((p) => p.type === type && p.status === "published");
-    if (!puzzle) throw new Error(`No published ${type} puzzle in the pool`);
-    return puzzle;
+    const candidates = pool.filter((p) => p.type === type && p.status === "published");
+    if (candidates.length === 0) throw new Error(`No published ${type} puzzle in the pool`);
+    return candidates[Math.floor(rng() * candidates.length)];
   });
 }
 
