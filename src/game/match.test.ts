@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PUZZLES } from "@/data/puzzles";
+import { loadPuzzles } from "@/data/puzzles";
 import { careerPuzzle } from "./__fixtures__/careerPuzzle";
 import { seeded } from "./__fixtures__/seeded";
 import type { BotPlan } from "./bot";
@@ -21,6 +21,7 @@ import {
 } from "./match";
 import { createRound, type RoundEvent, type SideState } from "./round";
 
+const PUZZLES = loadPuzzles();
 const rng = seeded(7);
 const correct = (points: number, reveal = 1): SideState => ({ kind: "correct", reveal, points });
 const wrong: SideState = { kind: "wrong", reveal: 1, timedOut: false };

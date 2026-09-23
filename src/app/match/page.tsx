@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { MatchScreen } from "@/components/match/MatchScreen";
-import { PUZZLES } from "@/data/puzzles";
+import { loadPuzzles } from "@/data/puzzles";
 import { drawSchedule } from "./actions";
 
 export const metadata: Metadata = {
@@ -13,6 +13,6 @@ export default async function MatchPage() {
   // the server-rendered first round matches what the client hydrates.
   await connection();
   return (
-    <MatchScreen pool={PUZZLES} initialSchedule={await drawSchedule()} drawSchedule={drawSchedule} />
+    <MatchScreen pool={loadPuzzles()} initialSchedule={await drawSchedule()} drawSchedule={drawSchedule} />
   );
 }

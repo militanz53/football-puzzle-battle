@@ -1,9 +1,15 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { isCorrectAnswer } from "@/game/answer";
 import { ROUND_ORDER } from "@/game/match";
 import { REVEAL_COUNT } from "@/game/scoring";
 import type { Puzzle } from "@/game/types";
-import { PUZZLES } from "./puzzles";
+import { loadPuzzles, savePuzzles } from "./puzzles";
+import { validatePool } from "./schema";
+
+const PUZZLES = loadPuzzles();
 
 /** Content checks, so a malformed puzzle record fails here and not mid-match. */
 
@@ -23,6 +29,10 @@ function revealCapacity(p: Puzzle): number {
 }
 
 describe("puzzle pool", () => {
+  it("passes the admin schema (the same rules the form and bulk import use)", () => {
+    expect(validatePool(PUZZLES)).toEqual([]);
+  });
+
   it("has at least one published puzzle of every type", () => {
     for (const type of ROUND_ORDER) {
       expect(PUZZLES.some((p) => p.type === type && p.status === "published")).toBe(true);
@@ -37,12 +47,13 @@ describe("puzzle pool", () => {
     const ofType = PUZZLES.filter((p) => p.type === type);
     const count = (d: Puzzle["difficulty"]) => ofType.filter((p) => p.difficulty === d).length;
 
-    it("has 10 puzzles", () => {
-      expect(ofType).toHaveLength(10);
+    // §30 sets 10 per type as the MVP target; /admin can add more.
+    it("has at least 10 puzzles", () => {
+      expect(ofType.length).toBeGreaterThanOrEqual(10);
     });
 
-    it("is balanced at 3 easy / 4 medium / 3 hard", () => {
-      expect([count("easy"), count("medium"), count("hard")]).toEqual([3, 4, 3]);
+    it("covers every difficulty", () => {
+      expect([count("easy"), count("medium"), count("hard")].every((n) => n > 0)).toBe(true);
     });
   });
 
@@ -96,5 +107,23 @@ describe("puzzle pool", () => {
       expect(p.reveal_data.lineup).toHaveLength(11);
       expect(p.reveal_data.lineup.filter((s) => s.missing)).toHaveLength(1);
     }
+  });
+});
+
+describe("puzzles.json storage", () => {
+  it("round-trips the pool through savePuzzles / loadPuzzles unchanged", () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "puzzles-"));
+    try {
+      const file = path.join(dir, "puzzles.json");
+      savePuzzles(PUZZLES, file);
+      expect(loadPuzzles(file)).toEqual(PUZZLES);
+    } finally {
+      rmSync(dir, { recursive: true });
+    }
+  });
+
+  it("keeps the file grouped by type in §5 order", () => {
+    const order = PUZZLES.map((p) => ROUND_ORDER.indexOf(p.type));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
   });
 });
