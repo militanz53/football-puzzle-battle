@@ -51,7 +51,7 @@ Rules that live outside the engine and are easy to miss:
 
 ## Progress
 
-Built so far: the Main Menu and a full MVP 0.1 match at `/match`, which PLAY opens. It has 5 rounds against a Medium bot with a random puzzle of each type from the 50-puzzle pool (§30), round results, the match result with Sudden Death, and rematch. The unlisted `/admin` panel (no login, §29) shows counts per type, lists, edits and deletes puzzles, and bulk-imports validated JSON; its Server Functions in `src/app/admin/actions.ts` re-validate with `src/data/schema.ts` before writing `puzzles.json`, and refuse to leave a type without a published puzzle. Not built yet: final Photo Reveal art, sounds (§23), practice, and how-to-play.
+Built so far: the Main Menu and a full MVP 0.1 match at `/match`, which PLAY opens. It has 5 rounds against a Medium bot with a random puzzle of each type from the 50-puzzle pool (§30), round results, the match result with Sudden Death, and rematch. The unlisted `/admin` panel (no login, §29) shows counts per type, lists, edits and deletes puzzles, and bulk-imports validated JSON; its Server Functions in `src/app/admin/actions.ts` re-validate with `src/data/schema.ts` before writing `puzzles.json`, and refuse to leave a type without a published puzzle. The §23 sounds are synthesised with Web Audio in `src/components/sound/` (no audio files): `sounds.ts` defines the tones, `cues.ts` maps round-state changes to sounds, `player.ts` plays them and keeps the mute choice in localStorage (`fpb:sound`), and `SoundToggle` sits top right on the menu and match screens. Stadium ambience is left out. Not built yet: final Photo Reveal art, practice, and how-to-play.
 
 ## First milestone: MVP 0.1 (§29, §40)
 

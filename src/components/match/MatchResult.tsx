@@ -1,4 +1,8 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect } from "react";
+import { play } from "@/components/sound/player";
 import { playerStats, totals, type MatchState } from "@/game/match";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
 
@@ -21,6 +25,8 @@ export function MatchResult({ match, onRematch }: { match: MatchState; onRematch
   const stats = playerStats(match);
   const sum = t.player + t.bot;
   const playerShare = sum === 0 ? 50 : (t.player / sum) * 100;
+
+  useEffect(() => play(won ? "victory" : "defeat"), [won]);
 
   return (
     <section className="flex flex-1 flex-col" aria-live="polite">

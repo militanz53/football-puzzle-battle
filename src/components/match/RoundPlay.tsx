@@ -6,12 +6,15 @@ import { ANSWER_WINDOW_MS, revealStage, type RoundState, type Side } from "@/gam
 import { pointsForReveal, REVEAL_COUNT, REVEAL_POINTS } from "@/game/scoring";
 import type { Puzzle } from "@/game/types";
 import { PUZZLE_LABEL, PuzzleBoard } from "@/components/puzzles/PuzzleBoard";
+import { roundCues } from "@/components/sound/cues";
+import { play } from "@/components/sound/player";
 import { Scoreboard } from "./Scoreboard";
 import { useRound } from "./useRound";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-function RevealTimer({ state }: { state: RoundState }) {
+/** Sudden Death decides the match without points (§12.1), so it hides the per-reveal values. */
+function RevealTimer({ state, suddenDeath }: { state: RoundState; suddenDeath: boolean }) {
   const stage = revealStage(state);
   const isLast = stage === REVEAL_COUNT;
   const nextAt = isLast ? state.windowMs : stage * state.intervalMs;
@@ -39,13 +42,15 @@ function RevealTimer({ state }: { state: RoundState }) {
                   style={{ width: `${fill * 100}%` }}
                 />
               </div>
-              <p
-                className={`mt-1.5 text-center font-display text-[11px] font-semibold tabular-nums ${
-                  current ? "text-accent" : "text-text-muted-2"
-                }`}
-              >
-                {pts}
-              </p>
+              {!suddenDeath && (
+                <p
+                  className={`mt-1.5 text-center font-display text-[11px] font-semibold tabular-nums ${
+                    current ? "text-accent" : "text-text-muted-2"
+                  }`}
+                >
+                  {pts}
+                </p>
+              )}
             </div>
           );
         })}
@@ -132,7 +137,13 @@ function BuzzArea({
     return (
       <div className="w-full rounded-2xl border border-border-subtle bg-bg-surface px-5 py-4 text-center">
         <p className={`font-display text-lg font-bold uppercase ${good ? "text-accent" : "text-text-primary"}`}>
-          {good ? `Locked in · +${player.points}` : player.timedOut ? "Time's up" : "Wrong answer"}
+          {good
+            ? suddenDeath
+              ? "Locked in"
+              : `Locked in · +${player.points}`
+            : player.timedOut
+              ? "Time's up"
+              : "Wrong answer"}
         </p>
         <p className="mt-1 text-sm text-text-secondary">
           {good ? "Waiting for your opponent…" : "You're out this round. Your opponent can still answer."}
@@ -165,6 +176,16 @@ function BuzzArea({
   );
 }
 
+/** §23: round start on mount, then reveal / buzz / correct / wrong as the round changes. */
+function useRoundSounds(round: RoundState) {
+  const previous = useRef(round);
+  useEffect(() => play("roundStart"), []);
+  useEffect(() => {
+    for (const cue of roundCues(previous.current, round)) play(cue);
+    previous.current = round;
+  }, [round]);
+}
+
 /** One live round: scoreboard, puzzle, reveal timer and buzz/answer controls (§10). */
 export function RoundPlay({
   puzzle,
@@ -179,6 +200,7 @@ export function RoundPlay({
 }) {
   const { state, buzz, submit } = useRound(puzzle);
   const { round } = state;
+  useRoundSounds(round);
 
   const finished = isRoundFinished(state, suddenDeath);
   const reported = useRef(false);
@@ -204,7 +226,12 @@ export function RoundPlay({
     <>
       <Scoreboard totals={totals} player={round.player} bot={round.bot} suddenDeath={suddenDeath} />
 
-      <section className="mt-4 rounded-[20px] border border-border-subtle bg-bg-surface p-4">
+      {/* data-puzzle-* let the E2E tests look up the puzzle; the answer is never in the DOM. */}
+      <section
+        data-puzzle-id={puzzle.id}
+        data-puzzle-type={puzzle.type}
+        className="mt-4 rounded-[20px] border border-border-subtle bg-bg-surface p-4"
+      >
         <p className="font-display text-xs font-semibold uppercase tracking-widest text-accent">
           {suddenDeath ? `Sudden death · ${PUZZLE_LABEL[puzzle.type]}` : PUZZLE_LABEL[puzzle.type]}
         </p>
@@ -213,7 +240,7 @@ export function RoundPlay({
       </section>
 
       <div className="mt-4">
-        <RevealTimer state={round} />
+        <RevealTimer state={round} suddenDeath={suddenDeath} />
       </div>
 
       <div className="mt-auto flex justify-center pt-5">

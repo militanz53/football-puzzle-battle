@@ -2,6 +2,7 @@
 // PLAY opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
 
 import Link from "next/link";
+import { SoundToggle } from "@/components/sound/SoundToggle";
 
 function Logo() {
   return (
@@ -39,6 +40,9 @@ export default function MainMenu() {
   return (
     <main className="relative flex flex-1 justify-center overflow-hidden px-6">
       <div className="relative flex w-full max-w-[390px] flex-col justify-between py-16">
+        <div className="absolute right-0 top-4">
+          <SoundToggle />
+        </div>
         <div className="flex flex-1 items-center justify-center pb-10">
           <Logo />
         </div>

@@ -1,7 +1,42 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import type { RoundRecord } from "@/game/match";
 import type { Side, SideState } from "@/game/round";
 import { PuzzleRecap } from "@/components/puzzles/PuzzleBoard";
+import { play } from "@/components/sound/player";
 import { Scoreboard } from "./Scoreboard";
+
+const COUNT_STEPS = 12;
+const COUNT_STEP_MS = 55;
+
+/**
+ * Counts the round's points up from 0 with a rising tick (§23 "score increase").
+ * With reduced motion it shows the total at once and ticks only once.
+ */
+function useCountUp(target: number): number {
+  const [value, setValue] = useState(() =>
+    target > 0 && !window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : target,
+  );
+  useEffect(() => {
+    if (target <= 0) return;
+    if (value === target) {
+      play("score");
+      return;
+    }
+    let step = 0;
+    const id = window.setInterval(() => {
+      step += 1;
+      setValue(Math.round((target * step) / COUNT_STEPS));
+      play("score", { rate: 1 + (0.5 * step) / COUNT_STEPS });
+      if (step === COUNT_STEPS) window.clearInterval(id);
+    }, COUNT_STEP_MS);
+    return () => window.clearInterval(id);
+    // Runs once per result screen (RoundResult remounts every round).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target]);
+  return value;
+}
 
 const clues = (n: number) => `${n} ${n === 1 ? "clue" : "clues"}`;
 
@@ -68,6 +103,7 @@ export function RoundResult({
   const { player, bot, puzzle, suddenDeath } = record;
   const { title, good } = headline(player);
   const points = player.kind === "correct" ? player.points : 0;
+  const shownPoints = useCountUp(suddenDeath ? 0 : points);
   const typed = player.kind === "wrong" && !player.timedOut && player.answer ? player.answer : null;
   const verdict = suddenDeath ? suddenDeathVerdict(record.firstCorrect) : null;
 
@@ -108,7 +144,7 @@ export function RoundResult({
               good ? "text-accent" : "text-text-muted-2"
             }`}
           >
-            +{points}
+            +{shownPoints}
           </p>
         )}
         <p className="mt-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary">

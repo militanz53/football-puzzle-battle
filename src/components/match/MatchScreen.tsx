@@ -14,6 +14,7 @@ import {
 } from "@/game/match";
 import type { Puzzle } from "@/game/types";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
+import { SoundToggle } from "@/components/sound/SoundToggle";
 import { MatchResult } from "./MatchResult";
 import { RoundPlay } from "./RoundPlay";
 import { RoundResult } from "./RoundResult";
@@ -56,7 +57,7 @@ function TopBar({ match }: { match: MatchState }) {
         >
           {label}
         </span>
-        <span className="w-9" />
+        <SoundToggle />
       </div>
       <div className="mt-3 grid grid-cols-5 gap-1.5" aria-hidden>
         {match.schedule.map((p, i) => (
