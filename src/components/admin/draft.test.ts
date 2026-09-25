@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { loadPuzzles } from "@/data/puzzles";
+import { loadSnapshot } from "@/test/snapshot";
 import { validatePuzzle } from "@/data/schema";
 import { ROUND_ORDER } from "@/game/match";
 import { draftFromPuzzle, draftToRecord, emptyDraft } from "./draft";
 
 describe("admin form draft", () => {
-  it.each(loadPuzzles().map((p) => [p.id, p] as const))("round-trips %s through the form unchanged", (_id, p) => {
+  it.each(loadSnapshot().map((p) => [p.id, p] as const))("round-trips %s through the form unchanged", (_id, p) => {
     expect(validatePuzzle(draftToRecord(draftFromPuzzle(p)))).toEqual({ ok: true, puzzle: p });
   });
 

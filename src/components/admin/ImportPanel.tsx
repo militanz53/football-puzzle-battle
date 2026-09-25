@@ -36,9 +36,13 @@ export function ImportPanel({ pool }: { pool: Puzzle[] }) {
     startSaving(async () => {
       const response = await importPuzzles(valid.map((i) => i.puzzle!));
       if (!response.ok) {
-        // The pool changed since validating (e.g. another tab); re-check against it.
+        // index 0: the database refused the batch; otherwise the pool changed since
+        // validating (e.g. another tab), so validating again shows why.
+        const dbError = response.problems.find((p) => p.index === 0);
         setServerError(
-          `Nothing was added: ${response.problems.length} record(s) no longer pass on the server. Validate again to see why.`,
+          dbError
+            ? `Nothing was added: ${dbError.issues[0].message}`
+            : `Nothing was added: ${response.problems.length} record(s) no longer pass on the server. Validate again to see why.`,
         );
         return;
       }

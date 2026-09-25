@@ -1,4 +1,12 @@
+import { loadEnvConfig } from "@next/env";
 import { defineConfig, devices } from "@playwright/test";
+
+// The tests read the Supabase table directly (answers, clean-up), with the keys the
+// dev server uses. Load .env.local in development mode, as next dev does.
+const nodeEnv = process.env.NODE_ENV;
+Object.assign(process.env, { NODE_ENV: "development" });
+loadEnvConfig(process.cwd(), true);
+Object.assign(process.env, { NODE_ENV: nodeEnv });
 
 // End-to-end tests of the MVP 0.1 match (§29, §40). Rounds run on the real 3 s
 // reveal clock, so a test takes one to two minutes.

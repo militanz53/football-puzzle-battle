@@ -1,18 +1,26 @@
-import { readFileSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
+import { rmSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test as base, expect, type Page } from "@playwright/test";
+import { createClient } from "@supabase/supabase-js";
+import { PUZZLES_TABLE, rowToPuzzle, type PuzzleRow } from "../src/data/rows";
 import type { Puzzle, PuzzleType } from "../src/game/types";
 
 export const ARTIFACTS = path.join(__dirname, "artifacts");
 export const SCREENSHOTS = path.join(ARTIFACTS, "screenshots");
 
-/** The pool the dev server serves: the test reads answers from it by puzzle id. */
-const POOL: Puzzle[] = JSON.parse(readFileSync(path.join(__dirname, "..", "src", "data", "puzzles.json"), "utf8"));
+/**
+ * The Supabase table the dev server reads, with the secret key (.env.local is loaded
+ * by playwright.config.ts). Tests look answers up here and clean up after themselves.
+ */
+export const db = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SECRET_KEY!, {
+  auth: { persistSession: false },
+});
 
-export function puzzleById(id: string): Puzzle {
-  const puzzle = POOL.find((p) => p.id === id);
-  if (!puzzle) throw new Error(`Puzzle ${id} is on screen but not in puzzles.json`);
-  return puzzle;
+export async function puzzleById(id: string): Promise<Puzzle> {
+  const { data, error } = await db.from(PUZZLES_TABLE).select("*").eq("id", id).maybeSingle();
+  if (error) throw new Error(`Could not look up ${id}: ${error.message}`);
+  if (!data) throw new Error(`Puzzle ${id} is on screen but not in the puzzles table`);
+  return rowToPuzzle(data as PuzzleRow);
 }
 
 export type LogEntry = { at: string; kind: string; text: string };
@@ -85,7 +93,7 @@ export const nextButton = (page: Page) =>
 export async function currentPuzzle(page: Page): Promise<Puzzle> {
   const card = page.locator("[data-puzzle-id]");
   await expect(card).toBeVisible({ timeout: 15_000 });
-  return puzzleById((await card.getAttribute("data-puzzle-id"))!);
+  return await puzzleById((await card.getAttribute("data-puzzle-id"))!);
 }
 
 export async function buzz(page: Page) {

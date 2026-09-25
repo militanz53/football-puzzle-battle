@@ -3,7 +3,7 @@ import { connection } from "next/server";
 import { PuzzleTable, type PuzzleRow } from "@/components/admin/PuzzleTable";
 import { buttonClass } from "@/components/admin/ui";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
-import { loadPuzzles } from "@/data/puzzles";
+import { fetchAllPuzzles } from "@/data/puzzles";
 import { ROUND_ORDER } from "@/game/match";
 import type { PuzzleStatus, PuzzleType } from "@/game/types";
 
@@ -36,7 +36,7 @@ export default async function AdminDashboard({ searchParams }: PageProps<"/admin
   const { type, status, saved } = await searchParams;
   const typeFilter = isType(type) ? type : null;
   const statusFilter = isStatus(status) ? status : null;
-  const pool = loadPuzzles();
+  const pool = await fetchAllPuzzles();
   const ofType = typeFilter ? pool.filter((p) => p.type === typeFilter) : pool;
   const shown = statusFilter ? ofType.filter((p) => p.status === statusFilter) : ofType;
   const draftCount = pool.filter((p) => p.status === "draft").length;

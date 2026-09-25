@@ -454,19 +454,3 @@ export function validateBatch(list: unknown[], pool: Puzzle[]): ImportItem[] {
     return item;
   });
 }
-
-// ---------------------------------------------------------------------------
-// Review
-// ---------------------------------------------------------------------------
-
-/** Publishes the given drafts; ids that are missing or already published are left alone. */
-export function publishDrafts(pool: Puzzle[], ids: string[]): { pool: Puzzle[]; published: string[] } {
-  const wanted = new Set(ids);
-  const published: string[] = [];
-  const next = pool.map((p) => {
-    if (!wanted.has(p.id) || p.status !== "draft") return p;
-    published.push(p.id);
-    return { ...p, status: "published" as const };
-  });
-  return { pool: next, published };
-}

@@ -18,9 +18,12 @@ npm test        # Vitest, all tests once
 npm run test:watch
 npx vitest run src/game/round.test.ts        # one file
 npx vitest run -t "sudden death"             # tests whose name matches
+npm run test:e2e                             # Playwright E2E (e2e/), ~4 min; reuses a running dev server
+npm run test:supabase                        # live Supabase connection + RLS checks (needs .env.local)
+npm run db:seed                              # copy src/data/puzzles.json into the table (--dry-run, --overwrite)
 ```
 
-Tests live next to the code as `*.test.ts` (`src/game/`, `src/data/`) and run in Node; config is `vitest.config.mts`. Engine tests use fixtures in `src/game/__fixtures__/` (a fixed puzzle and a seeded RNG), not the content in `src/data/`. `src/data/puzzles.test.ts` runs every record through the admin schema (`src/data/schema.ts`), so new content that cannot fill 5 reveals or rejects its own aliases fails there.
+Tests live next to the code as `*.test.ts` (`src/game/`, `src/data/`) and run in Node; config is `vitest.config.mts`. Engine tests use fixtures in `src/game/__fixtures__/` (a fixed puzzle and a seeded RNG), not the content in `src/data/`. `src/data/content.test.ts` runs every record of the JSON backup through the admin schema (`src/data/schema.ts`). `src/data/puzzles.test.ts` tests the Supabase store against an in-memory fake (`src/test/fakeSupabase.ts`) that mimics the table's RLS; no unit test touches the network. `npm run test:supabase` runs the live checks in `*.integration.test.ts` (connection and RLS on the real table); E2E reads answers from, and cleans up in, the real table.
 
 ## Stack (§33)
 
@@ -45,8 +48,8 @@ Rules that live outside the engine and are easy to miss:
 
 ## Adding a puzzle type or puzzle content
 
-- A new type means a `reveal_data` shape in `src/game/types.ts` (added to the `Puzzle` union), a board in `src/components/puzzles/`, cases in `PuzzleBoard` / `PuzzleRecap`, a case in `revealCapacity` in `src/data/puzzles.test.ts`, a reader in `validatePuzzle` (`src/data/schema.ts`) plus its entry in `schemaGuide.ts`, and a section in the admin form (`src/components/admin/draft.ts`, `TypeFields.tsx`). The engine does not change.
-- `src/data/puzzles.json` stands in for the puzzle table, and `src/data/puzzles.ts` (server-only, `node:fs`) reads it on every `loadPuzzles()` call and writes it with `savePuzzles()`. Records use the §24 snake_case field names so they can move to Supabase unchanged. It holds the §30 pool (10 per type) plus anything added in `/admin`. `buildSchedule` draws one random published puzzle per type; `src/app/match/page.tsx` draws the first match per request (`connection()`) so the server render and hydration agree, and rematch calls the `drawSchedule` Server Function (`src/app/match/actions.ts`), so selection never happens in the browser.
+- A new type means a `reveal_data` shape in `src/game/types.ts` (added to the `Puzzle` union), a board in `src/components/puzzles/`, cases in `PuzzleBoard` / `PuzzleRecap`, a case in `revealCapacity` in `src/data/content.test.ts`, the type in the table's `type` check (a new migration), a reader in `validatePuzzle` (`src/data/schema.ts`) plus its entry in `schemaGuide.ts`, and a section in the admin form (`src/components/admin/draft.ts`, `TypeFields.tsx`). The engine does not change.
+- Puzzles live in the Supabase `puzzles` table (`supabase/migrations/`). Columns are the §24 fields; `src/data/rows.ts` maps rows (NULL for absent optional fields) to `Puzzle`. `src/data/puzzles.ts` (server-only) is the store: the game reads with `fetchPublishedPuzzles()` using the publishable key, so RLS itself keeps drafts out of matches; the admin reads and writes with the secret key. RLS: anon/authenticated may select published rows only and hold no write privileges; only the secret key (service_role) writes. Schema changes go in a new migration file, run in the Supabase SQL Editor (the API keys cannot run DDL). `src/data/puzzles.json` is the pre-Supabase backup the table was seeded from (`npm run db:seed` adds missing rows only unless `--overwrite`); no runtime code reads it, and tests use it as an offline fixture (`src/test/snapshot.ts`). `buildSchedule` draws one random published puzzle per type; `src/app/match/page.tsx` draws the first match per request (`connection()`) so the server render and hydration agree, and rematch calls the `drawSchedule` Server Function (`src/app/match/actions.ts`), so selection never happens in the browser.
 - Photo Reveal currently draws a parametrised SVG placeholder (`Illustration` in `PhotoRevealBoard.tsx`), not final art. The commissioned illustrations are a separate work package (§9.2.1).
 
 ## Progress

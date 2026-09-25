@@ -1,129 +1,128 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { isCorrectAnswer } from "@/game/answer";
-import { ROUND_ORDER } from "@/game/match";
-import { REVEAL_COUNT } from "@/game/scoring";
+import { careerPuzzle } from "@/game/__fixtures__/careerPuzzle";
+import { buildSchedule, ROUND_ORDER } from "@/game/match";
 import type { Puzzle } from "@/game/types";
-import { loadPuzzles, savePuzzles } from "./puzzles";
-import { validatePool } from "./schema";
+import { seeded } from "@/game/__fixtures__/seeded";
+import { fakeSupabase, fakeTable } from "@/test/fakeSupabase";
+import { loadSnapshot } from "@/test/snapshot";
+import {
+  deletePuzzleRow,
+  fetchAllPuzzles,
+  fetchPublishedPuzzles,
+  insertPuzzleRows,
+  PuzzleStoreError,
+  publishPuzzleRows,
+  updatePuzzleRow,
+} from "./puzzles";
+import { puzzleToRow } from "./rows";
 
-const PUZZLES = loadPuzzles();
+// The Supabase-backed store, against an in-memory table (src/test/fakeSupabase.ts)
+// that mimics the table's Row Level Security. No network.
 
-/** Content checks, so a malformed puzzle record fails here and not mid-match. */
+const SNAPSHOT = loadSnapshot();
+const draft = (id: string, answer = id): Puzzle => ({ ...careerPuzzle, id, correct_answer: answer, status: "draft" });
+const seededTable = (extra: Puzzle[] = []) =>
+  fakeTable([...SNAPSHOT, ...extra].map((p) => ({ ...puzzleToRow(p), created_at: "2026-09-25T00:00:00Z", updated_at: "2026-09-25T00:00:00Z" })));
 
-function revealCapacity(p: Puzzle): number {
-  switch (p.type) {
-    case "career_journey":
-      return p.reveal_data.clubs.length;
-    case "goal_map":
-      return p.reveal_data.clues.length + 1; // reveal 1 is the move itself
-    case "photo_reveal":
-      return p.reveal_data.stage_labels.length;
-    case "missing_xi":
-      return p.reveal_data.clues.length;
-    case "teammate_web":
-      return p.reveal_data.players.length - 1; // reveal 1 shows two players
-  }
-}
-
-describe("puzzle pool", () => {
-  it("passes the admin schema (the same rules the form and bulk import use)", () => {
-    expect(validatePool(PUZZLES)).toEqual([]);
+describe("reading", () => {
+  it("gives the game the published puzzles only, exactly as seeded, in §5 order", async () => {
+    const table = seededTable([draft("career_900")]);
+    const pool = await fetchPublishedPuzzles(fakeSupabase(table, "public"));
+    expect(pool).toHaveLength(SNAPSHOT.length);
+    expect(pool.map((p) => p.id)).not.toContain("career_900");
+    expect(pool).toEqual(
+      [...SNAPSHOT].sort((a, b) => ROUND_ORDER.indexOf(a.type) - ROUND_ORDER.indexOf(b.type) || a.id.localeCompare(b.id)),
+    );
+    expect(table.log).toEqual([{ role: "public", op: "select", filters: ["status=published"] }]);
   });
 
-  it("has at least one published puzzle of every type", () => {
-    for (const type of ROUND_ORDER) {
-      expect(PUZZLES.some((p) => p.type === type && p.status === "published")).toBe(true);
-    }
+  it("still keeps drafts out of matches if the query forgot its filter (RLS)", async () => {
+    const table = seededTable([draft("career_900")]);
+    const everything = await fetchAllPuzzles(fakeSupabase(table, "public"));
+    expect(everything.every((p) => p.status === "published")).toBe(true);
   });
 
-  it("uses unique ids", () => {
-    expect(new Set(PUZZLES.map((p) => p.id)).size).toBe(PUZZLES.length);
+  it("gives the admin drafts too", async () => {
+    const pool = await fetchAllPuzzles(fakeSupabase(seededTable([draft("career_900")]), "secret"));
+    expect(pool.find((p) => p.id === "career_900")?.status).toBe("draft");
   });
 
-  describe.each(ROUND_ORDER)("%s pool (§30)", (type) => {
-    const ofType = PUZZLES.filter((p) => p.type === type);
-    const count = (d: Puzzle["difficulty"]) => ofType.filter((p) => p.difficulty === d).length;
-
-    // §30 sets 10 per type as the MVP target; /admin can add more.
-    it("has at least 10 puzzles", () => {
-      expect(ofType.length).toBeGreaterThanOrEqual(10);
-    });
-
-    it("covers every difficulty", () => {
-      expect([count("easy"), count("medium"), count("hard")].every((n) => n > 0)).toBe(true);
-    });
+  it("builds a match from what it reads", async () => {
+    const pool = await fetchPublishedPuzzles(fakeSupabase(seededTable(), "public"));
+    expect(buildSchedule(pool, seeded(3)).map((p) => p.type)).toEqual(ROUND_ORDER);
   });
 
-  it("does not accept the same answer twice within a type", () => {
-    for (const type of ROUND_ORDER) {
-      const answers = PUZZLES.filter((p) => p.type === type).map((p) => p.correct_answer);
-      expect(new Set(answers).size).toBe(answers.length);
-    }
+  it("pages past PostgREST's 1000-row limit", async () => {
+    const many = Array.from({ length: 1234 }, (_, i) => draft(`career_${String(i + 1000).padStart(4, "0")}`));
+    const table = fakeTable(many.map(puzzleToRow));
+    expect(await fetchAllPuzzles(fakeSupabase(table, "secret"))).toHaveLength(1234);
+    expect(table.log).toHaveLength(2);
   });
 
-  it("never shows the answer among a Teammate Web's own players", () => {
-    for (const p of PUZZLES) {
-      if (p.type !== "teammate_web") continue;
-      for (const name of p.reveal_data.players) expect(isCorrectAnswer(name, p)).toBe(false);
-    }
-  });
-
-  it("gives Missing XI players unique names (they are used as keys)", () => {
-    for (const p of PUZZLES) {
-      if (p.type !== "missing_xi") continue;
-      const names = p.reveal_data.lineup.map((s) => s.name);
-      expect(new Set(names).size).toBe(names.length);
-    }
-  });
-
-  describe.each(PUZZLES.map((p) => [p.id, p] as const))("%s", (_id, p) => {
-    it("has enough content for all 5 reveals", () => {
-      expect(revealCapacity(p)).toBeGreaterThanOrEqual(REVEAL_COUNT);
-    });
-
-    it("uses the MVP reveal interval of 3 s (§6.1)", () => {
-      expect(p.reveal_interval_seconds).toBe(3);
-    });
-
-    it("accepts its own answer and every alias (§26.1)", () => {
-      for (const answer of [p.correct_answer, ...p.answer_aliases]) {
-        expect(isCorrectAnswer(answer, p)).toBe(true);
-      }
-    });
-  });
-
-  it("uses illustrations only for Photo Reveal (§9.2.1)", () => {
-    for (const p of PUZZLES) {
-      if (p.type === "photo_reveal") expect(p.image_source).toBe("illustration");
-    }
-  });
-
-  it("gives every Missing XI exactly 11 players with one missing", () => {
-    for (const p of PUZZLES) {
-      if (p.type !== "missing_xi") continue;
-      expect(p.reveal_data.lineup).toHaveLength(11);
-      expect(p.reveal_data.lineup.filter((s) => s.missing)).toHaveLength(1);
-    }
+  it("turns a database error into a readable one", async () => {
+    const table = seededTable();
+    table.failNext = { code: "PGRST301", message: "JWT expired" };
+    const failure = fetchAllPuzzles(fakeSupabase(table, "secret"));
+    await expect(failure).rejects.toBeInstanceOf(PuzzleStoreError);
+    await expect(failure).rejects.toThrow("Could not load puzzles: JWT expired (PGRST301)");
   });
 });
 
-describe("puzzles.json storage", () => {
-  it("round-trips the pool through savePuzzles / loadPuzzles unchanged", () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "puzzles-"));
-    try {
-      const file = path.join(dir, "puzzles.json");
-      savePuzzles(PUZZLES, file);
-      expect(loadPuzzles(file)).toEqual(PUZZLES);
-    } finally {
-      rmSync(dir, { recursive: true });
-    }
+describe("writing (secret key)", () => {
+  it("inserts a batch, stored as rows with NULL for absent fields", async () => {
+    const table = fakeTable();
+    await insertPuzzleRows([draft("a1"), draft("a2")], fakeSupabase(table, "secret"));
+    expect(table.rows.map((r) => r.id)).toEqual(["a1", "a2"]);
+    expect(table.rows[0]).toMatchObject({ competition: null, season: null, image_source: null, license_type: null });
   });
 
-  it("keeps the file grouped by type in §5 order", () => {
-    const order = PUZZLES.map((p) => ROUND_ORDER.indexOf(p.type));
-    expect(order).toEqual([...order].sort((a, b) => a - b));
+  it("inserts all or nothing when one id is taken", async () => {
+    const table = fakeTable([puzzleToRow(draft("a1"))]);
+    await expect(insertPuzzleRows([draft("a2"), draft("a1")], fakeSupabase(table, "secret"))).rejects.toThrow(/23505/);
+    expect(table.rows.map((r) => r.id)).toEqual(["a1"]);
+  });
+
+  it("updates in place, including a changed id, and reports a missing row", async () => {
+    const table = fakeTable([puzzleToRow(draft("a1"))]);
+    const db = fakeSupabase(table, "secret");
+    expect(await updatePuzzleRow("a1", { ...draft("a9"), question: "Who?" }, db)).toBe(true);
+    expect(table.rows).toEqual([expect.objectContaining({ id: "a9", question: "Who?" })]);
+    expect(await updatePuzzleRow("gone", draft("gone"), db)).toBe(false);
+  });
+
+  it("deletes by id and reports a missing row", async () => {
+    const table = fakeTable([puzzleToRow(draft("a1")), puzzleToRow(draft("a2"))]);
+    const db = fakeSupabase(table, "secret");
+    expect(await deletePuzzleRow("a1", db)).toBe(true);
+    expect(await deletePuzzleRow("a1", db)).toBe(false);
+    expect(table.rows.map((r) => r.id)).toEqual(["a2"]);
+  });
+
+  it("publishes only the chosen drafts", async () => {
+    const table = fakeTable([careerPuzzle, draft("d1"), draft("d2"), draft("d3")].map(puzzleToRow));
+    const published = await publishPuzzleRows(["d3", "d1", "test_career", "gone"], fakeSupabase(table, "secret"));
+    expect(published).toEqual(["d1", "d3"]);
+    expect(table.rows.map((r) => [r.id, r.status])).toEqual([
+      ["test_career", "published"],
+      ["d1", "published"],
+      ["d2", "draft"],
+      ["d3", "published"],
+    ]);
+  });
+});
+
+// The live version of these checks, against the real table, is in
+// src/lib/supabase/connection.integration.test.ts.
+describe("the publishable key cannot write", () => {
+  it("is refused on insert, update, publish and delete, and nothing changes", async () => {
+    const table = fakeTable([careerPuzzle, draft("d1")].map(puzzleToRow));
+    const before = structuredClone(table.rows);
+    const db = fakeSupabase(table, "public");
+    const denied = /permission denied.*42501/;
+    await expect(insertPuzzleRows([draft("a1")], db)).rejects.toThrow(denied);
+    await expect(updatePuzzleRow("test_career", { ...careerPuzzle, question: "Hacked?" }, db)).rejects.toThrow(denied);
+    await expect(publishPuzzleRows(["d1"], db)).rejects.toThrow(denied);
+    await expect(deletePuzzleRow("test_career", db)).rejects.toThrow(denied);
+    expect(table.rows).toEqual(before);
   });
 });

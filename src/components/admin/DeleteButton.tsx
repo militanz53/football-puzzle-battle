@@ -8,7 +8,7 @@ export function DeleteButton({ id, label }: { id: string; label: string }) {
   const [pending, startTransition] = useTransition();
 
   function onClick() {
-    if (!window.confirm(`Delete ${id} (${label})? This rewrites puzzles.json.`)) return;
+    if (!window.confirm(`Delete ${id} (${label})? This cannot be undone.`)) return;
     startTransition(async () => {
       const result = await deletePuzzle(id);
       if (!result.ok) window.alert(result.message);

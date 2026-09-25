@@ -2,12 +2,12 @@ import { notFound } from "next/navigation";
 import { connection } from "next/server";
 import { draftFromPuzzle } from "@/components/admin/draft";
 import { PuzzleForm } from "@/components/admin/PuzzleForm";
-import { loadPuzzles } from "@/data/puzzles";
+import { fetchAllPuzzles } from "@/data/puzzles";
 
 export default async function EditPuzzlePage({ params }: PageProps<"/admin/edit/[id]">) {
   await connection();
   const { id } = await params;
-  const pool = loadPuzzles();
+  const pool = await fetchAllPuzzles();
   const puzzle = pool.find((p) => p.id === decodeURIComponent(id));
   if (!puzzle) notFound();
 

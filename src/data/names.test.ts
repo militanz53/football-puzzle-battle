@@ -3,9 +3,9 @@ import { isCorrectAnswer, normalizeAnswer } from "@/game/answer";
 import { careerPuzzle } from "@/game/__fixtures__/careerPuzzle";
 import { buildNameIndex, MAX_SUGGESTIONS, suggestNames } from "./names";
 import PLAYER_NAMES from "./player-names.json";
-import { loadPuzzles } from "./puzzles";
+import { loadSnapshot } from "@/test/snapshot";
 
-const POOL = loadPuzzles();
+const POOL = loadSnapshot();
 const INDEX = buildNameIndex(POOL);
 const NAMES = INDEX.map((e) => e.name);
 

@@ -61,10 +61,10 @@ describe("secret key stays on the server", () => {
     expect(readers.map((f) => path.relative(SRC, f))).toEqual([]);
   });
 
-  it("is never imported by a Client Component", () => {
+  it("is never imported by a Client Component (nor is the server-only puzzle store)", () => {
     const offenders = sourceFiles(SRC).filter((f) => {
       const code = readFileSync(f, "utf8");
-      return /^["']use client["']/m.test(code) && /lib\/supabase\/(server|env)["']/.test(code);
+      return /^["']use client["']/m.test(code) && /(lib\/supabase\/(server|env)|data\/puzzles)["']/.test(code);
     });
     expect(offenders.map((f) => path.relative(SRC, f))).toEqual([]);
   });
