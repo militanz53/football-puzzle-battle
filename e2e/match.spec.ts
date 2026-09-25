@@ -54,7 +54,11 @@ async function playRound(page: Page, round: number, strategy: Strategy, shot: (n
       await waitForClue(page, 5);
       await shot(`round-${round}-${puzzle.type}-reveal-5`);
       await buzz(page);
-      await answer(page, puzzle.correct_answer);
+      // Answer through autocomplete: type the last name, tap the suggestion (one tap submits).
+      await page.getByLabel("Your answer").fill(puzzle.correct_answer.split(" ").at(-1)!);
+      await expect(page.getByRole("listbox", { name: "Suggested players" })).toBeVisible();
+      await shot(`round-${round}-autocomplete`);
+      await page.getByRole("option", { name: puzzle.correct_answer, exact: true }).click();
       break;
     case "answer-timeout":
       await buzz(page);

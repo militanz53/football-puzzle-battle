@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { buildNameIndex } from "@/data/names";
 import {
   advance,
   createMatch,
@@ -94,6 +95,7 @@ export function MatchScreen({
   drawSchedule: () => Promise<Puzzle[]>;
 }) {
   const [match, setMatch] = useState(() => createMatch(initialSchedule));
+  const names = useMemo(() => buildNameIndex(pool), [pool]);
   const drawing = useRef(false);
   // Bumped for every new round so RoundPlay remounts with a fresh engine state.
   const [roundKey, setRoundKey] = useState(0);
@@ -140,6 +142,7 @@ export function MatchScreen({
             puzzle={match.current}
             suddenDeath={match.suddenDeath}
             totals={scores}
+            names={names}
             onFinish={onFinish}
           />
         )}

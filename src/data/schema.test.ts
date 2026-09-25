@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { careerPuzzle } from "@/game/__fixtures__/careerPuzzle";
 import type { Puzzle } from "@/game/types";
-import { checkAgainstPool, nextId, parseImport, validateBatch, validatePuzzle } from "./schema";
+import { checkAgainstPool, nextId, parseImport, publishDrafts, validateBatch, validatePuzzle } from "./schema";
 import { EXAMPLE_IMPORT } from "./schemaGuide";
 
 const issuesOf = (raw: unknown) => {
@@ -155,9 +155,37 @@ describe("bulk import", () => {
     expect(r.ok && r.items[0].puzzle?.id).toBe("career_900");
   });
 
+  it("brings every imported puzzle in as a draft, even one marked published", () => {
+    const items = validateBatch([minimalCareer, { ...minimalCareer, id: "career_901", correct_answer: "Pato", status: "published" }], []);
+    expect(items.map((i) => i.puzzle?.status)).toEqual(["draft", "draft"]);
+  });
+
   it("explains broken JSON", () => {
     const r = parseImport("[{ oops", []);
     expect(r.ok).toBe(false);
     expect(!r.ok && r.error).toMatch(/Not valid JSON/);
+  });
+});
+
+describe("publishDrafts", () => {
+  const draft = (id: string) => ({ ...careerPuzzle, id, status: "draft" as const });
+
+  it("publishes only the chosen drafts", () => {
+    const pool = [careerPuzzle, draft("d1"), draft("d2"), draft("d3")];
+    const { pool: next, published } = publishDrafts(pool, ["d1", "d3"]);
+    expect(published).toEqual(["d1", "d3"]);
+    expect(next.map((p) => [p.id, p.status])).toEqual([
+      ["test_career", "published"],
+      ["d1", "published"],
+      ["d2", "draft"],
+      ["d3", "published"],
+    ]);
+  });
+
+  it("ignores ids that are missing or already published", () => {
+    const pool = [careerPuzzle, draft("d1")];
+    const { pool: next, published } = publishDrafts(pool, ["test_career", "gone"]);
+    expect(published).toEqual([]);
+    expect(next).toEqual(pool);
   });
 });

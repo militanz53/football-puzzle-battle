@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState, useTransition } from "react";
 import { importPuzzles } from "@/app/admin/actions";
 import { PUZZLE_LABEL, PuzzleBoard } from "@/components/puzzles/PuzzleBoard";
@@ -41,7 +42,7 @@ export function ImportPanel({ pool }: { pool: Puzzle[] }) {
         );
         return;
       }
-      setDone(`Added ${response.ids.length} puzzle(s): ${response.ids.join(", ")}.`);
+      setDone(`Added ${response.ids.length} draft(s): ${response.ids.join(", ")}.`);
       setResult(null);
       setText("");
     });
@@ -73,14 +74,21 @@ export function ImportPanel({ pool }: { pool: Puzzle[] }) {
         </div>
       </Card>
 
-      {done && <p className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent">{done}</p>}
+      {done && (
+        <p className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent">
+          {done}{" "}
+          <Link href="/admin?status=draft" className="font-semibold underline">
+            Review drafts →
+          </Link>
+        </p>
+      )}
       {result && !result.ok && <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-300">{result.error}</p>}
 
       {result?.ok && (
         <>
           <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-border-subtle bg-bg-surface p-4">
             <p className="text-sm">
-              <span className="font-display text-2xl font-bold text-accent">{valid.length}</span> ready to add
+              <span className="font-display text-2xl font-bold text-accent">{valid.length}</span> ready to add as drafts
               {invalid.length > 0 && (
                 <>
                   {" · "}
@@ -89,7 +97,7 @@ export function ImportPanel({ pool }: { pool: Puzzle[] }) {
               )}
             </p>
             <button type="button" onClick={confirm} disabled={valid.length === 0 || saving} className={buttonClass.primary}>
-              {saving ? "Adding…" : `Add ${valid.length} puzzle${valid.length === 1 ? "" : "s"}`}
+              {saving ? "Adding…" : `Add ${valid.length} draft${valid.length === 1 ? "" : "s"}`}
             </button>
           </div>
           {serverError && <p className="text-sm text-red-300">{serverError}</p>}

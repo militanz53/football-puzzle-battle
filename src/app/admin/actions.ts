@@ -2,7 +2,14 @@
 
 import { revalidatePath } from "next/cache";
 import { loadPuzzles, savePuzzles } from "@/data/puzzles";
-import { checkAgainstPool, checkPublishedCoverage, type Issue, validateBatch, validatePuzzle } from "@/data/schema";
+import {
+  checkAgainstPool,
+  checkPublishedCoverage,
+  type Issue,
+  publishDrafts,
+  validateBatch,
+  validatePuzzle,
+} from "@/data/schema";
 
 // Admin writes to src/data/puzzles.json. There is no login in the MVP (§29), so the
 // panel is only unlisted. Every function re-validates on the server: what the
@@ -54,4 +61,14 @@ export async function importPuzzles(raw: unknown[]): Promise<ImportSaveResult> {
   savePuzzles([...pool, ...added]);
   revalidatePath("/admin", "layout");
   return { ok: true, ids: added.map((p) => p.id) };
+}
+
+/** Publishes the selected drafts in one write (the review step after a bulk import). */
+export async function publishPuzzles(ids: string[]): Promise<{ published: string[] }> {
+  const { pool, published } = publishDrafts(loadPuzzles(), ids);
+  if (published.length > 0) {
+    savePuzzles(pool);
+    revalidatePath("/admin", "layout");
+  }
+  return { published };
 }

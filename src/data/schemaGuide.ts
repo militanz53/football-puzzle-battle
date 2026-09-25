@@ -21,7 +21,7 @@ Fields shared by every type:
 - tags (optional, default []): array of short lowercase strings
 - competition, season (optional): strings
 - id (optional): lowercase letters, digits, _ or -. Leave it out and one is assigned.
-- status (optional, default "published"): "published" | "draft"
+- status: leave it out. Imported puzzles always arrive as drafts and are published after review.
 - bot_difficulty (optional, default "medium"): "easy" | "medium" | "hard"
 - reveal_interval_seconds (optional, default 3): must be 3
 - Any other field is rejected.

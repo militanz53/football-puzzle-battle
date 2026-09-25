@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { type NameEntry, suggestNames } from "@/data/names";
 import { isRoundFinished, type ObservedRound } from "@/game/match";
 import { ANSWER_WINDOW_MS, revealStage, type RoundState, type Side } from "@/game/round";
 import { pointsForReveal, REVEAL_COUNT, REVEAL_POINTS } from "@/game/scoring";
@@ -62,27 +63,59 @@ function RevealTimer({ state, suddenDeath }: { state: RoundState; suddenDeath: b
 function AnswerPanel({
   answerMs,
   worth,
+  names,
   onSubmit,
 }: {
   answerMs: number;
   /** Points at stake, or null in Sudden Death. */
   worth: number | null;
+  names: NameEntry[];
   onSubmit: (text: string) => void;
 }) {
   const [text, setText] = useState("");
+  /** Highlighted suggestion (arrow keys), or -1 for the typed text. */
+  const [active, setActive] = useState(-1);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => inputRef.current?.focus(), []);
 
+  const suggestions = useMemo(() => suggestNames(names, text), [names, text]);
   const left = Math.max(0, ANSWER_WINDOW_MS - answerMs);
+  const open = suggestions.length > 0;
 
   return (
     <form
-      className="w-full"
+      className="relative w-full"
       onSubmit={(e) => {
         e.preventDefault();
-        onSubmit(text);
+        onSubmit(active >= 0 && suggestions[active] ? suggestions[active] : text);
       }}
     >
+      {open && (
+        // Above the input: on phones the keyboard covers everything below it.
+        <ul
+          id="answer-suggestions"
+          role="listbox"
+          aria-label="Suggested players"
+          className="absolute inset-x-0 bottom-full mb-2 overflow-hidden rounded-2xl border border-border-subtle bg-bg-surface-alt shadow-[0_-12px_32px_-12px_rgba(0,0,0,0.6)]"
+        >
+          {suggestions.map((name, i) => (
+            <li key={name} id={`answer-option-${i}`} role="option" aria-selected={i === active}>
+              {/* One tap submits: the answer window is short. mousedown keeps focus in the input. */}
+              <button
+                type="button"
+                tabIndex={-1}
+                onMouseDown={(e) => e.preventDefault()}
+                onClick={() => onSubmit(name)}
+                className={`block w-full px-4 py-3 text-left text-base font-semibold ${
+                  i === active ? "bg-accent/15 text-accent" : "text-text-primary hover:bg-bg-surface"
+                } ${i > 0 ? "border-t border-border-subtle" : ""}`}
+              >
+                {name}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       <div className="mb-2 flex items-center justify-between font-display text-xs font-semibold uppercase tracking-widest">
         <span className="text-accent">Your answer{worth === null ? "" : ` · +${worth}`}</span>
         <span className="tabular-nums text-text-secondary">{pad2(Math.ceil(left / 1000))}s</span>
@@ -94,9 +127,27 @@ function AnswerPanel({
         <input
           ref={inputRef}
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => {
+            setText(e.target.value);
+            setActive(-1);
+          }}
+          onKeyDown={(e) => {
+            if (!open) return;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              const step = e.key === "ArrowDown" ? 1 : -1;
+              setActive((a) => Math.max(-1, Math.min(suggestions.length - 1, a + step)));
+            } else if (e.key === "Escape") {
+              setActive(-1);
+            }
+          }}
           placeholder="Type the player's name"
           aria-label="Your answer"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
+          aria-controls="answer-suggestions"
+          aria-activedescendant={active >= 0 ? `answer-option-${active}` : undefined}
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="words"
@@ -117,11 +168,13 @@ function AnswerPanel({
 function BuzzArea({
   state,
   suddenDeath,
+  names,
   onBuzz,
   onSubmit,
 }: {
   state: RoundState;
   suddenDeath: boolean;
+  names: NameEntry[];
   onBuzz: () => void;
   onSubmit: (text: string) => void;
 }) {
@@ -129,7 +182,7 @@ function BuzzArea({
   const stake = (reveal: number) => (suddenDeath ? null : pointsForReveal(reveal));
 
   if (player.kind === "answering") {
-    return <AnswerPanel answerMs={state.answerMs} worth={stake(player.reveal)} onSubmit={onSubmit} />;
+    return <AnswerPanel answerMs={state.answerMs} worth={stake(player.reveal)} names={names} onSubmit={onSubmit} />;
   }
 
   if (player.kind === "correct" || player.kind === "wrong") {
@@ -191,11 +244,14 @@ export function RoundPlay({
   puzzle,
   suddenDeath,
   totals,
+  names,
   onFinish,
 }: {
   puzzle: Puzzle;
   suddenDeath: boolean;
   totals: Record<Side, number>;
+  /** Autocomplete index for the answer box. */
+  names: NameEntry[];
   onFinish: (round: ObservedRound) => void;
 }) {
   const { state, buzz, submit } = useRound(puzzle);
@@ -244,7 +300,7 @@ export function RoundPlay({
       </div>
 
       <div className="mt-auto flex justify-center pt-5">
-        <BuzzArea state={round} suddenDeath={suddenDeath} onBuzz={buzz} onSubmit={submit} />
+        <BuzzArea state={round} suddenDeath={suddenDeath} names={names} onBuzz={buzz} onSubmit={submit} />
       </div>
     </>
   );
