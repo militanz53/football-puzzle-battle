@@ -1,4 +1,5 @@
 import { connection } from "next/server";
+import { requireAdmin } from "@/lib/admin/auth";
 import { emptyDraft } from "@/components/admin/draft";
 import { PuzzleForm } from "@/components/admin/PuzzleForm";
 import { fetchAllPuzzles } from "@/data/puzzles";
@@ -8,6 +9,7 @@ import type { PuzzleType } from "@/game/types";
 
 export default async function NewPuzzlePage({ searchParams }: PageProps<"/admin/new">) {
   await connection();
+  await requireAdmin();
   const { type } = await searchParams;
   const initialType: PuzzleType = (ROUND_ORDER as unknown[]).includes(type) ? (type as PuzzleType) : ROUND_ORDER[0];
   const takenIds = (await fetchAllPuzzles()).map((p) => p.id);

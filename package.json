@@ -11,7 +11,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:supabase": "vitest run --config vitest.integration.config.mts",
-    "db:seed": "tsx scripts/seed-puzzles.ts"
+    "db:seed": "tsx scripts/seed-puzzles.ts",
+    "db:export": "tsx --conditions=react-server scripts/export-puzzles.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.117.2",

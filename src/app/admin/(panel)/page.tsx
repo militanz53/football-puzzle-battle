@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { connection } from "next/server";
+import { requireAdmin } from "@/lib/admin/auth";
 import { PuzzleTable, type PuzzleRow } from "@/components/admin/PuzzleTable";
 import { buttonClass } from "@/components/admin/ui";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
@@ -32,7 +33,8 @@ const tabClass = (active: boolean) =>
   }`;
 
 export default async function AdminDashboard({ searchParams }: PageProps<"/admin">) {
-  await connection(); // read the file on every request, never at build time
+  await connection();
+  await requireAdmin();
   const { type, status, saved } = await searchParams;
   const typeFilter = isType(type) ? type : null;
   const statusFilter = isStatus(status) ? status : null;

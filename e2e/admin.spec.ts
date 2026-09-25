@@ -1,7 +1,7 @@
 import type { Page } from "@playwright/test";
 import { PUZZLES_TABLE } from "../src/data/rows";
 import { EXAMPLE_IMPORT } from "../src/data/schemaGuide";
-import { db, expect, test } from "./helpers";
+import { db, expect, signInAsAdmin, test } from "./helpers";
 
 // Bulk import → drafts → review and publish, against the real Supabase table.
 // The test's puzzles get "e2e_" ids and answers no real puzzle uses, and are deleted
@@ -33,7 +33,7 @@ const draftCount = async (page: Page) => {
 
 test("imported puzzles arrive as drafts and are published in bulk or one by one", async ({ page, shot }) => {
   await test.step("bulk import brings the puzzles in as drafts", async () => {
-    await page.goto("/admin/import");
+    await signInAsAdmin(page, "/admin/import");
     await page.getByPlaceholder(/"type": "career_journey"/).fill(JSON.stringify(BATCH));
     await page.getByRole("button", { name: "Validate" }).click();
     await expect(page.getByText(`${BATCH.length} ready to add as drafts`)).toBeVisible();

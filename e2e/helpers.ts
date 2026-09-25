@@ -123,3 +123,20 @@ export async function waitForRoundResult(page: Page) {
 export async function waitForNextRound(page: Page) {
   await expect(nextButton(page)).toBeHidden({ timeout: 10_000 });
 }
+
+// ---------------------------------------------------------------------------
+// Admin
+// ---------------------------------------------------------------------------
+
+/** The /admin password from .env.local (loaded by playwright.config.ts). */
+export const ADMIN_PASSWORD = process.env.ADMIN_PANEL_PASSWORD ?? "";
+
+/** Signs in through the login form, then lands on `path`. */
+export async function signInAsAdmin(page: Page, path = "/admin") {
+  if (!ADMIN_PASSWORD) throw new Error("ADMIN_PANEL_PASSWORD is not set in .env.local");
+  await page.goto(path);
+  await expect(page).toHaveURL(/\/admin\/login/);
+  await page.getByLabel("Password").fill(ADMIN_PASSWORD);
+  await page.getByRole("button", { name: "Sign in" }).click();
+  await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\?")}$`));
+}
