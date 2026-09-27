@@ -88,6 +88,7 @@ test("two players play one match against each other, see each other live, and ca
     await expect(scoreOf(b, "player")).toHaveText("0");
     await expect(a.locator('[data-side="opponent"]')).toContainText(names.b);
     await expect(b.locator('[data-side="opponent"]')).toContainText(names.a);
+    await expect(a.getByText(`+${aPoints}`, { exact: true })).toBeVisible(); // the count-up has finished (~0.7 s)
     await Promise.all([
       a.screenshot({ path: "e2e/artifacts/screenshots/versus-05-a-result.png" }),
       b.screenshot({ path: "e2e/artifacts/screenshots/versus-05-b-result.png" }),
