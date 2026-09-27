@@ -1,12 +1,13 @@
 "use server";
 
-import { playerSession } from "@/lib/session";
+import { checkNickname } from "@/lib/nickname";
+import { ensurePlayerName, playerSession, setPlayerName } from "@/lib/session";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { joinQueue, leaveQueue, pollQueue, type QueueDeps, type QueuePoll } from "@/server/match/queue";
 import { supabaseQueueStore } from "@/server/match/queueStore";
-import { createMatch, defaultDeps, runOnMatch, viewMatch } from "@/server/match/runner";
-import { buzz, catchUp, nextRound, startRound, submitAnswer } from "@/server/match/service";
-import { loadMatchOrigin } from "@/server/match/store";
+import { checkIn, createMatch, defaultDeps, runOnMatch, viewMatch } from "@/server/match/runner";
+import { buzz, catchUp, linkRematch, nextRound, requestRematch, sideOf, startRound, submitAnswer } from "@/server/match/service";
+import { findActiveRealMatch, loadMatchOrigin, loadMatchWithPresence } from "@/server/match/store";
 import type { MatchView } from "@/server/match/view";
 
 // The match's only entry points (GDD §27: the server owns puzzle selection, round
@@ -15,8 +16,9 @@ import type { MatchView } from "@/server/match/view";
 // them on its own clock, decides, stores the match and pushes the new view over
 // Realtime. Each call also returns that view, so the caller does not wait for it.
 //
-// No accounts yet (§29): a player is an anonymous session cookie, and a match id is
-// a random UUID that only its page knows.
+// No accounts yet (§29): a player is an anonymous session cookie. A bot match is
+// guarded by its random UUID; a match between two real players also checks that the
+// cookie holds one of its two seats, and acts for that seat.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ANSWER_LENGTH = 100;
@@ -35,7 +37,15 @@ function queueDeps(session: string): QueueDeps {
     // The engine's opponent plays every match for now, paired or not (see queue.ts).
     createMatch: (opponentName, queueEntryId) =>
       createMatch(deps, opponentName, { opponentKind: "bot", queueEntryId, playerSession: session }),
-    viewMatch: (matchId) => viewMatch(matchId, deps),
+    // One match for two paired players: seat a is the one building it (this browser).
+    createRealMatch: (a, b) =>
+      createMatch(
+        deps,
+        b.name,
+        { opponentKind: "human", queueEntryId: null, playerSession: a.sessionId, opponentSession: b.sessionId },
+        { a: { session: a.sessionId, name: a.name }, b: { session: b.sessionId, name: b.name }, since: deps.now() },
+      ),
+    viewMatch: (matchId) => viewMatch(matchId, deps, session),
   };
 }
 
@@ -43,10 +53,21 @@ function queueDeps(session: string): QueueDeps {
 // Quick Match (§13.1)
 // ---------------------------------------------------------------------------
 
-/** PLAY: joins the queue. The screen then polls until an opponent is found. */
+/**
+ * The main menu's nickname box (§13.2). An empty box keeps the current name (the
+ * first PLAY gives "Player_1234" to a player without one).
+ */
+export async function saveNickname(input: string): Promise<{ ok: true; name: string } | { ok: false; error: string }> {
+  const check = checkNickname(input);
+  if (!check.ok) return check;
+  await setPlayerName(check.name);
+  return check;
+}
+
+/** PLAY: joins the queue under the player's nickname. The screen then polls until an opponent is found. */
 export async function findOpponent(): Promise<{ entryId: string }> {
   const session = await playerSession();
-  const entry = await joinQueue(session, queueDeps(session));
+  const entry = await joinQueue(session, await ensurePlayerName(), queueDeps(session));
   return { entryId: entry.id };
 }
 
@@ -61,42 +82,111 @@ export async function stopSearching(entryId: string): Promise<void> {
   await leaveQueue(uuid(entryId, "queue entry"), session, queueDeps(session));
 }
 
-/** Rematch: new puzzles against the same opponent, no queue (§13.1). */
+/**
+ * Rematch against the bot: new puzzles, same opponent, at once, no queue (§13.1).
+ * A real-player match uses offerRematch instead.
+ */
 export async function rematch(previousMatchId: string): Promise<MatchView> {
   const session = await playerSession();
   const deps = defaultDeps();
   const origin = await loadMatchOrigin(uuid(previousMatchId, "match id"), deps.db);
-  if (!origin || origin.playerSession !== session) throw new Error("Unknown match");
+  if (!origin || origin.playerSession !== session || origin.opponentKind !== "bot") throw new Error("Unknown match");
   return createMatch(deps, origin.opponentName, { opponentKind: origin.opponentKind, queueEntryId: null, playerSession: session });
+}
+
+/**
+ * Rematch after a real-player match (§13.1): this player's offer. If the opponent's
+ * offer stands too, the two get a new match (same seats, same nicknames) and this
+ * returns it; otherwise the screen waits for the opponent's answer, which arrives as
+ * view.rematchNext over Realtime, or for the offer to run out.
+ */
+export async function offerRematch(id: string): Promise<{ status: "waiting"; view: MatchView } | { status: "ready"; view: MatchView }> {
+  const session = await playerSession();
+  const deps = defaultDeps();
+  const matchId = uuid(id, "match id");
+  let bothAsked = false;
+  const offered = await runOnMatch(
+    matchId,
+    (record, clock, seat) => {
+      const outcome = requestRematch(record, clock.now, seat);
+      bothAsked = outcome.bothAsked;
+      return outcome;
+    },
+    deps,
+    session,
+  );
+  if (offered.rematchNext) return { status: "ready", view: await viewMatch(offered.rematchNext, deps, session) };
+  if (!bothAsked) return { status: "waiting", view: offered };
+
+  // Both asked: a new match between the same two players, seats and nicknames kept.
+  const players = (await loadMatchWithPresence(matchId, deps.db))!.record.players!;
+  const next = await createMatch(
+    deps,
+    players.b.name,
+    { opponentKind: "human", queueEntryId: null, playerSession: players.a.session, opponentSession: players.b.session },
+    { ...players, since: deps.now() },
+  );
+  // If the opponent linked a rematch a moment earlier, both follow theirs.
+  const linked = await runOnMatch(matchId, (record) => linkRematch(record, next.id), deps, session);
+  return { status: "ready", view: await viewMatch(linked.rematchNext ?? next.id, deps, session) };
+}
+
+/** Opens a match this player holds a seat in (the rematch the opponent made). */
+export async function openMatch(id: string): Promise<MatchView> {
+  return viewMatch(uuid(id, "match id"), defaultDeps(), await playerSession());
+}
+
+/**
+ * On opening /match: the real-player match this browser is still in, if any, so a
+ * reload or a reopened tab gets back into it (§28) instead of starting a new search.
+ */
+export async function resumeMatch(): Promise<MatchView | null> {
+  const session = await playerSession();
+  const deps = defaultDeps();
+  const id = await findActiveRealMatch(session, deps.now(), deps.db);
+  return id ? viewMatch(id, deps, session) : null;
 }
 
 // ---------------------------------------------------------------------------
 // Playing a match
 // ---------------------------------------------------------------------------
 
-/** The round on screen starts now (server clock). Harmless to repeat. */
+/** The round on screen starts now (server clock). Harmless to repeat, and from either player. */
 export async function startMatchRound(id: string): Promise<MatchView> {
-  return runOnMatch(uuid(id, "match id"), startRound, defaultDeps());
+  return runOnMatch(uuid(id, "match id"), startRound, defaultDeps(), await playerSession());
 }
 
 /** Buzz (§7). Refused while the opponent answers; the returned view says whether it counted. */
 export async function buzzIn(id: string): Promise<MatchView> {
-  return runOnMatch(uuid(id, "match id"), (record, clock) => buzz(record, clock), defaultDeps());
+  return runOnMatch(uuid(id, "match id"), (record, clock, seat) => buzz(record, clock, sideOf(seat)), defaultDeps(), await playerSession());
 }
 
 /** The player's answer, checked on the server (§26.1). */
 export async function answer(id: string, text: string): Promise<MatchView> {
   if (typeof text !== "string" || text.length > MAX_ANSWER_LENGTH) throw new Error("Invalid answer");
-  return runOnMatch(uuid(id, "match id"), (record, clock) => submitAnswer(record, clock, text), defaultDeps());
+  return runOnMatch(
+    uuid(id, "match id"),
+    (record, clock, seat) => submitAnswer(record, clock, text, sideOf(seat)),
+    defaultDeps(),
+    await playerSession(),
+  );
 }
 
 /** Brings the match up to the server clock (the browser calls this when view.nextChangeInMs is up). */
 export async function syncMatch(id: string): Promise<MatchView> {
-  return runOnMatch(uuid(id, "match id"), (record, clock) => catchUp(record, clock.now), defaultDeps());
+  return runOnMatch(uuid(id, "match id"), (record, clock) => catchUp(record, clock.now), defaultDeps(), await playerSession());
 }
 
-/** Leaves the round result: next round, Sudden Death, or the final result. */
+/** Leaves the round result: next round, Sudden Death, or the final result. Either player may call it. */
 export async function nextMatchRound(id: string): Promise<MatchView> {
   const deps = defaultDeps();
-  return runOnMatch(uuid(id, "match id"), (record, clock) => nextRound(record, clock, deps.loadPool), deps);
+  return runOnMatch(uuid(id, "match id"), (record, clock) => nextRound(record, clock, deps.loadPool), deps, await playerSession());
+}
+
+/**
+ * The match screen checks in every few seconds. Against a real player this is
+ * presence: a player silent for 20 s has left, and the other wins (§13.1).
+ */
+export async function stillHere(id: string): Promise<MatchView | null> {
+  return checkIn(uuid(id, "match id"), await playerSession(), defaultDeps());
 }

@@ -18,7 +18,24 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /** Match result (§12): totals, VICTORY/DEFEAT and the player's stats. */
-export function MatchResult({ match, opponentName, onRematch }: { match: MatchState; opponentName: string; onRematch: () => void }) {
+export function MatchResult({
+  match,
+  opponentName,
+  endedBecause,
+  onRematch,
+  rematchState,
+  opponentWantsRematch,
+}: {
+  match: MatchState;
+  opponentName: string;
+  /** Set when a player left before the end (a real-player match). */
+  endedBecause: "opponent-left" | "you-left" | null;
+  onRematch: () => void;
+  /** Against a real player: waiting for their answer, or they did not answer. */
+  rematchState: "idle" | "waiting" | "declined";
+  /** Against a real player: they already asked for a rematch. */
+  opponentWantsRematch: boolean;
+}) {
   const t = totals(match.rounds);
   const won = match.winner === "player";
   const suddenDeathRounds = match.rounds.filter((r) => r.suddenDeath).length;
@@ -38,7 +55,12 @@ export function MatchResult({ match, opponentName, onRematch }: { match: MatchSt
         >
           {won ? "Victory" : "Defeat"}
         </h2>
-        {suddenDeathRounds > 0 && (
+        {endedBecause && (
+          <p className="mt-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary">
+            {endedBecause === "opponent-left" ? `${opponentName} left the match` : "You left the match"}
+          </p>
+        )}
+        {!endedBecause && suddenDeathRounds > 0 && (
           <p className="mt-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary">
             Decided in sudden death
             {suddenDeathRounds > 1 ? ` · ${suddenDeathRounds} rounds` : ""}
@@ -79,12 +101,23 @@ export function MatchResult({ match, opponentName, onRematch }: { match: MatchSt
       </div>
 
       <div className="mt-auto flex flex-col gap-3 pt-8">
+        {opponentWantsRematch && rematchState === "idle" && (
+          <p role="status" className="text-center font-display text-sm font-semibold text-accent motion-safe:animate-pop">
+            {opponentName} wants a rematch!
+          </p>
+        )}
+        {rematchState === "declined" && (
+          <p role="status" className="text-center font-display text-sm font-semibold text-text-secondary">
+            {opponentName} left · finding a new opponent…
+          </p>
+        )}
         <button
           type="button"
           onClick={onRematch}
-          className="h-14 w-full rounded-2xl bg-accent font-display text-lg font-bold uppercase tracking-wider text-bg-primary transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+          disabled={rematchState !== "idle"}
+          className="h-14 w-full rounded-2xl bg-accent font-display text-lg font-bold uppercase tracking-wider text-bg-primary transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:cursor-default disabled:opacity-70"
         >
-          Rematch
+          {rematchState === "waiting" ? `Waiting for ${opponentName}…` : "Rematch"}
         </button>
         <Link
           href="/"

@@ -2,8 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import { seeded } from "@/game/__fixtures__/seeded";
 import { fakeSupabase, fakeTable } from "@/test/fakeSupabase";
 import { loadSnapshot } from "@/test/snapshot";
-import { createMatch, type MatchDeps, MatchNotFoundError, runOnMatch } from "./runner";
-import { buzz, startRound } from "./service";
+import { checkIn, createMatch, MatchAccessError, type MatchDeps, MatchNotFoundError, runOnMatch } from "./runner";
+import { buzz, LEAVE_AFTER_MS, START_GRACE_MS, startRound } from "./service";
+import { findActiveRealMatch } from "./store";
 import type { MatchView } from "./view";
 
 // The runner against an in-memory `matches` table (secret key). No network.
@@ -103,5 +104,70 @@ describe("match runner", () => {
     await expect(runOnMatch(id, startRound, deps)).resolves.toMatchObject({ version: 1 });
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("realtime down"));
     warn.mockRestore();
+  });
+});
+
+describe("a match between two real players", () => {
+  const PLAYERS = { a: { session: "sa", name: "Emre_34" }, b: { session: "sb", name: "Can2004" }, since: T0 };
+  const HUMAN = { opponentKind: "human" as const, queueEntryId: null, playerSession: "sa", opponentSession: "sb" };
+
+  it("broadcasts each seat its own view on its own channel", async () => {
+    const { deps, sent } = setup();
+    const { id } = await createMatch(deps, "Can2004", HUMAN, PLAYERS);
+    await runOnMatch(id, startRound, deps, "sb");
+    expect(sent.map((v) => [v.channel, v.opponentName])).toEqual([
+      [`match:${id}`, "Can2004"],
+      [`match:${id}:b`, "Emre_34"],
+    ]);
+  });
+
+  it("acts for the caller's seat and answers with their view", async () => {
+    const { deps } = setup();
+    const { id } = await createMatch(deps, "Can2004", HUMAN, PLAYERS);
+    await runOnMatch(id, startRound, deps, "sa");
+    const view = await runOnMatch(id, (r, c, seat) => buzz(r, c, seat === "a" ? "player" : "bot"), deps, "sb");
+    expect(view.round?.player.kind).toBe("answering"); // seat b sees their own buzz as theirs
+  });
+
+  it("refuses a browser that holds neither seat", async () => {
+    const { deps } = setup();
+    const { id } = await createMatch(deps, "Can2004", HUMAN, PLAYERS);
+    await expect(runOnMatch(id, startRound, deps, "someone-else")).rejects.toBeInstanceOf(MatchAccessError);
+    await expect(runOnMatch(id, startRound, deps)).rejects.toBeInstanceOf(MatchAccessError);
+  });
+
+  it("records presence and ends the match for a seat that went silent", async () => {
+    const { deps, table, advance } = setup();
+    const { id } = await createMatch(deps, "Can2004", HUMAN, PLAYERS);
+    await runOnMatch(id, startRound, deps, "sa");
+    expect(await checkIn(id, "sa", deps)).toMatchObject({ match: { status: "playing" } });
+    expect(table.rows[0].seat_a_seen_at).toBe(new Date(T0).toISOString());
+    advance(START_GRACE_MS + LEAVE_AFTER_MS + 1_000); // seat b never checked in: counted from after the start grace
+    const view = await checkIn(id, "sa", deps);
+    expect(view).toMatchObject({ endedBecause: "opponent-left", match: { status: "over", winner: "player" } });
+  });
+
+  it("has nothing to check in for a bot match", async () => {
+    const { deps } = setup();
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
+    expect(await checkIn(id, "session-1", deps)).toBeNull();
+  });
+});
+
+describe("resuming a real-player match after a reload", () => {
+  const PLAYERS = { a: { session: "sa", name: "Emre_34" }, b: { session: "sb", name: "Can2004" }, since: T0 };
+  const HUMAN = { opponentKind: "human" as const, queueEntryId: null, playerSession: "sa", opponentSession: "sb" };
+
+  it("finds the running real-player match for either seat, but not a bot match or a finished one", async () => {
+    const { table, deps } = setup();
+    const bot = await createMatch(deps, "Mateo_37", { ...ORIGIN, playerSession: "sb" });
+    const real = await createMatch(deps, "Can2004", HUMAN, PLAYERS);
+    for (const row of table.rows) row.created_at = new Date(T0).toISOString();
+    expect(await findActiveRealMatch("sa", T0, deps.db)).toBe(real.id);
+    expect(await findActiveRealMatch("sb", T0, deps.db)).toBe(real.id);
+    expect(await findActiveRealMatch("nobody", T0, deps.db)).toBeNull();
+    table.rows.find((r) => r.id === real.id)!.status = "over";
+    expect(await findActiveRealMatch("sb", T0, deps.db)).toBeNull();
+    expect(bot.id).toBeDefined();
   });
 });

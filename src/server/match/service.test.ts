@@ -3,7 +3,21 @@ import { seeded } from "@/game/__fixtures__/seeded";
 import { buildSchedule, ROUND_ORDER } from "@/game/match";
 import type { Puzzle } from "@/game/types";
 import { loadSnapshot } from "@/test/snapshot";
-import { buzz, catchUp, type Clock, type MatchRecord, newMatchRecord, nextRound, startRound, submitAnswer } from "./service";
+import {
+  buzz,
+  catchUp,
+  type Clock,
+  forfeitIfGone,
+  LEAVE_AFTER_MS,
+  linkRematch,
+  type MatchRecord,
+  START_GRACE_MS,
+  newMatchRecord,
+  nextRound,
+  requestRematch,
+  startRound,
+  submitAnswer,
+} from "./service";
 import { hideAnswer, summaryColumns, toView } from "./view";
 
 // The server's match rules over a fake clock. The engine itself is tested in src/game.
@@ -26,7 +40,7 @@ describe("starting a round", () => {
     const { record, changed } = startRound(freshMatch(), clock(0));
     expect(changed).toBe(true);
     expect(record.round?.startedAt).toBe(T0);
-    expect(record.round?.botPlan.buzzReveal).toBeGreaterThanOrEqual(2);
+    expect(record.round?.botPlan?.buzzReveal).toBeGreaterThanOrEqual(2);
   });
 
   it("is idempotent: a second start keeps the first start time", () => {
@@ -168,5 +182,129 @@ describe("the browser's view", () => {
       round_started_at: new Date(T0).toISOString(),
       player_buzz_ms: 3_400,
     });
+  });
+});
+
+describe("two real players in one match", () => {
+  const players = { a: { session: "sa", name: "Emre_34" }, b: { session: "sb", name: "Can2004" }, since: T0 };
+  const realMatch = (): MatchRecord => ({ id: "m2", ...newMatchRecord(buildSchedule(POOL, seeded(2)), "Can2004", players) });
+  const begun = () => startRound(realMatch(), clock(0)).record;
+
+  it("starts rounds without a bot plan: the opponent seat acts for itself", () => {
+    expect(begun().round?.botPlan).toBeNull();
+  });
+
+  it("takes seat b's buzz and answer as the opponent side, timed by the server", () => {
+    let r = begun();
+    r = buzz(r, clock(3_400), "bot").record;
+    const seenByA = toView(r, T0 + 3_500, "a");
+    expect(seenByA.round).toMatchObject({ answering: "bot", bot: { kind: "answering", reveal: 2 } });
+    r = submitAnswer(r, clock(4_000), r.match.current.correct_answer, "bot").record;
+    expect(toView(r, T0 + 4_000, "a").round?.bot).toMatchObject({ kind: "correct", points: 800 });
+  });
+
+  it("refuses seat b's buzz while seat a answers, and the other way round (§7)", () => {
+    let r = buzz(begun(), clock(1_000), "player").record;
+    expect(buzz(r, clock(1_200), "bot").accepted).toBe(false);
+    r = buzz(begun(), clock(1_000), "bot").record;
+    expect(buzz(r, clock(1_200), "player").accepted).toBe(false);
+  });
+
+  it("never lets anyone act as the bot in a bot match", () => {
+    expect(buzz(started(), clock(1_000), "bot").accepted).toBe(false);
+  });
+
+  it("shows seat b the match from their side: themselves as You, seat a by name", () => {
+    let r = begun();
+    r = buzz(r, clock(500), "bot").record;
+    r = submitAnswer(r, clock(900), r.match.current.correct_answer, "bot").record;
+    const b = toView(r, T0 + 900, "b");
+    expect(b.opponentName).toBe("Emre_34");
+    expect(b.round?.player).toMatchObject({ kind: "correct", points: 1000 });
+    expect(b.round?.bot.kind).toBe("waiting");
+    expect(b.channel).toBe("match:m2:b");
+    const a = toView(r, T0 + 900, "a");
+    expect(a.opponentName).toBe("Can2004");
+    expect(a.round?.bot).toMatchObject({ kind: "correct", points: 1000 });
+    expect(a.channel).toBe("match:m2");
+  });
+
+  it("mirrors finished rounds and the winner for seat b", () => {
+    let r = begun();
+    r = buzz(r, clock(500), "bot").record;
+    r = submitAnswer(r, clock(900), r.match.current.correct_answer, "bot").record;
+    r = catchUp(r, T0 + 16_000).record;
+    const b = toView(r, T0 + 16_000, "b");
+    expect(b.match.rounds[0]).toMatchObject({ player: { kind: "correct", points: 1000 }, bot: { kind: "no-buzz" } });
+    expect(b.rematch).toBe("mutual");
+  });
+
+  it("gives the match to the player who stayed when the other is silent for 20 s", () => {
+    const r = begun();
+    const seen = { a: T0 + 19_000, b: T0 + 1_000 };
+    expect(forfeitIfGone(r, T0 + 20_500, "a", seen).changed).toBe(false);
+    const after = forfeitIfGone(r, T0 + 21_500, "a", seen).record;
+    expect(after.match).toMatchObject({ status: "over", winner: "player" });
+    expect(toView(after, T0 + 21_500, "a")).toMatchObject({ endedBecause: "opponent-left", match: { winner: "player" } });
+    expect(toView(after, T0 + 21_500, "b")).toMatchObject({ endedBecause: "you-left", match: { winner: "bot" } });
+  });
+
+  it("counts presence from a little after the start for a seat that never checked in", () => {
+    const at = T0 + START_GRACE_MS + LEAVE_AFTER_MS;
+    expect(forfeitIfGone(begun(), at - 1, "b", { a: null, b: at }).changed).toBe(false);
+    expect(forfeitIfGone(begun(), at + 1, "b", { a: null, b: at }).record.match.winner).toBe("bot");
+  });
+
+  it("does nothing in a bot match", () => {
+    expect(forfeitIfGone(started(), T0 + 60_000, "a", { a: null, b: null }).changed).toBe(false);
+  });
+});
+
+describe("presence and rematch in a real-player match", () => {
+  const players = { a: { session: "sa", name: "Emre_34" }, b: { session: "sb", name: "Can2004" }, since: T0 };
+  const realMatch = (): MatchRecord => ({ id: "m3", ...newMatchRecord(buildSchedule(POOL, seeded(2)), "Can2004", players) });
+  const over = (): MatchRecord => ({ ...realMatch(), match: { ...realMatch().match, status: "over", winner: "player" } });
+
+  it("tells a player their opponent is away after 5 s, with the 15 s reconnect window counting down (§28)", () => {
+    const r = startRound(realMatch(), clock(0)).record;
+    const seen = { a: T0 + 20_000, b: T0 + 16_000 };
+    expect(toView(r, T0 + 20_000, "a", seen).opponentAway).toBeNull(); // b silent 4 s: fine
+    expect(toView(r, T0 + 21_000, "a", seen).opponentAway).toEqual({ reconnectInMs: 15_000 });
+    expect(toView(r, T0 + 30_000, "a", seen).opponentAway).toEqual({ reconnectInMs: 6_000 });
+    expect(toView(r, T0 + 30_000, "b", { ...seen, a: T0 + 29_000 }).opponentAway).toBeNull(); // a is here
+  });
+
+  it("stops saying away once the opponent is back", () => {
+    const r = startRound(realMatch(), clock(0)).record;
+    expect(toView(r, T0 + 30_000, "a", { a: T0 + 30_000, b: T0 + 29_000 }).opponentAway).toBeNull();
+  });
+
+  it("does not offer a rematch before the match is over, nor in a bot match", () => {
+    expect(requestRematch(realMatch(), T0, "a").changed).toBe(false);
+    expect(requestRematch(started(), T0, "a").changed).toBe(false);
+  });
+
+  it("makes a rematch when both ask within 10 s, and shows each the other's offer", () => {
+    const first = requestRematch(over(), T0, "a");
+    expect(first).toMatchObject({ changed: true, bothAsked: false });
+    expect(toView(first.record, T0 + 1_000, "b").rematchOffer).toEqual({ you: false, opponent: true, expiresInMs: 9_000 });
+    expect(toView(first.record, T0 + 1_000, "a").rematchOffer).toEqual({ you: true, opponent: false, expiresInMs: 9_000 });
+    const second = requestRematch(first.record, T0 + 6_000, "b");
+    expect(second.bothAsked).toBe(true);
+    const linked = linkRematch(second.record, "m-next").record;
+    expect(toView(linked, T0 + 6_000, "a").rematchNext).toBe("m-next");
+    expect(toView(linked, T0 + 6_000, "b").rematchNext).toBe("m-next");
+    expect(linkRematch(linked, "m-other").changed).toBe(false); // the first link stands
+  });
+
+  it("lets an offer run out after 10 s", () => {
+    const first = requestRematch(over(), T0, "a").record;
+    expect(requestRematch(first, T0 + 10_001, "b").bothAsked).toBe(false);
+    expect(toView(first, T0 + 10_001, "b").rematchOffer).toBeNull();
+  });
+
+  it("keeps the first time when a player asks twice", () => {
+    const first = requestRematch(over(), T0, "a").record;
+    expect(requestRematch(first, T0 + 3_000, "a").changed).toBe(false);
   });
 });

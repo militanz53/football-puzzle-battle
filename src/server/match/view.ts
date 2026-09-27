@@ -1,8 +1,19 @@
-import { totals, type MatchState } from "@/game/match";
-import type { RoundState } from "@/game/round";
+import { totals, type MatchState, type RoundRecord } from "@/game/match";
+import type { RoundState, Side } from "@/game/round";
 import { msUntilNextChange } from "@/game/timeline";
 import type { Puzzle } from "@/game/types";
-import { replayNow, type MatchRecord } from "./service";
+import { matchChannel } from "@/lib/matchChannel";
+import {
+  AWAY_AFTER_MS,
+  LEAVE_AFTER_MS,
+  offerStands,
+  otherSeat,
+  REMATCH_WINDOW_MS,
+  replayNow,
+  silentFor,
+  type MatchRecord,
+  type Seat,
+} from "./service";
 
 // What a browser may know about a match. Sent by the Server Functions and over
 // Realtime. Everything here is safe to show: no bot plan, and no answer for a puzzle
@@ -24,6 +35,18 @@ export interface MatchView {
   round: PublicRound | null;
   /** When the round next changes by itself (bot, time-outs); the browser asks again then. */
   nextChangeInMs: number | null;
+  /** The Realtime channel this viewer's updates arrive on. */
+  channel: string;
+  /** Set when the match ended because a player left: the opponent, or this viewer. */
+  endedBecause: "opponent-left" | "you-left" | null;
+  /** Rematch: at once against the same opponent (the bot), or offered to a real opponent. */
+  rematch: "same-opponent" | "mutual";
+  /** Rematch offers that stand (§13.1): made by this viewer, by the opponent, and time left. */
+  rematchOffer: { you: boolean; opponent: boolean; expiresInMs: number } | null;
+  /** Once both asked: the new match between the same two players. */
+  rematchNext: string | null;
+  /** The opponent has gone silent (§28): time left for them to reconnect. */
+  opponentAway: { reconnectInMs: number } | null;
 }
 
 /**
@@ -48,16 +71,61 @@ function publicRound(state: RoundState): PublicRound {
   return round as PublicRound;
 }
 
-export function toView(record: MatchRecord, now: number): MatchView {
+function rematchOffer(record: MatchRecord, now: number, seat: Seat): MatchView["rematchOffer"] {
+  const offers = record.rematch;
+  if (!offers || offers.next) return null;
+  const you = offerStands(offers[seat], now);
+  const opponent = offerStands(offers[otherSeat(seat)], now);
+  if (!you && !opponent) return null;
+  const first = Math.min(...[offers.a, offers.b].filter((t): t is number => offerStands(t, now)));
+  return { you, opponent, expiresInMs: Math.max(0, REMATCH_WINDOW_MS - (now - first)) };
+}
+
+const flip = (side: Side | null): Side | null => (side === "player" ? "bot" : side === "bot" ? "player" : null);
+
+function mirrorRecord(r: RoundRecord): RoundRecord {
+  return { ...r, player: r.bot, bot: r.player, playerBuzzMs: r.botBuzzMs, botBuzzMs: r.playerBuzzMs, firstCorrect: flip(r.firstCorrect) };
+}
+
+/**
+ * The match seen from seat b of a real-player match: the engine's opponent side is
+ * this viewer, so "player" and "bot" swap everywhere. The screens then work the same
+ * for both players: "You" on the left, the other player by name on the right.
+ */
+function mirror(view: MatchView): MatchView {
+  const { match, round } = view;
+  return {
+    ...view,
+    match: { ...match, rounds: match.rounds.map(mirrorRecord), winner: flip(match.winner) },
+    round: round && { ...round, player: round.bot, bot: round.player, answering: flip(round.answering) },
+  };
+}
+
+/**
+ * The match as `seat` sees it (a bot match only has seat a). `seen` is each seat's last
+ * check-in, for telling the viewer their opponent is away.
+ */
+export function toView(record: MatchRecord, now: number, seat: Seat = "a", seen?: Record<Seat, number | null>): MatchView {
   const { match } = record;
   const replay = replayNow(record, now);
   const inPlay = match.status === "playing";
   const round = replay ? publicRound(replay.state.round) : null;
-  return {
+  const players = record.players ?? null;
+  const view: MatchView = {
     id: record.id,
     version: record.version,
     serverTime: now,
-    opponentName: record.opponentName,
+    opponentName: seat === "a" ? record.opponentName : (players?.a.name ?? record.opponentName),
+    channel: matchChannel(record.id, seat),
+    endedBecause: record.ended ? (record.ended.seat === seat ? "you-left" : "opponent-left") : null,
+    rematch: players ? "mutual" : "same-opponent",
+    rematchOffer: rematchOffer(record, now, seat),
+    rematchNext: record.rematch?.next ?? null,
+    opponentAway: (() => {
+      if (!players || !seen || match.status === "over") return null;
+      const silent = silentFor(players, seen, otherSeat(seat), now);
+      return silent >= AWAY_AFTER_MS ? { reconnectInMs: Math.max(0, LEAVE_AFTER_MS - silent) } : null;
+    })(),
     match: {
       ...match,
       schedule: match.schedule.map(hideAnswer),
@@ -70,6 +138,7 @@ export function toView(record: MatchRecord, now: number): MatchView {
         ? msUntilNextChange(match.current, record.round, now - record.round.startedAt, match.suddenDeath)
         : null,
   };
+  return seat === "b" ? mirror(view) : view;
 }
 
 /** The table's readable columns, kept in step with the jsonb state on every write. */
@@ -93,5 +162,8 @@ export function summaryColumns(record: MatchRecord, now: number) {
     bot_score: score.bot,
     winner: match.winner,
     opponent_name: record.opponentName,
+    players: record.players ?? null,
+    ended: record.ended ?? null,
+    rematch: record.rematch ?? null,
   };
 }

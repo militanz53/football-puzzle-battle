@@ -15,6 +15,8 @@ interface QueueRow {
   search_until: string;
   paired_with: string | null;
   match_id: string | null;
+  resolved_at: string | null;
+  nickname: string | null;
 }
 
 const toEntry = (row: QueueRow): QueueEntry => ({
@@ -24,9 +26,11 @@ const toEntry = (row: QueueRow): QueueEntry => ({
   searchUntil: Date.parse(row.search_until),
   pairedWith: row.paired_with,
   matchId: row.match_id,
+  resolvedAt: row.resolved_at ? Date.parse(row.resolved_at) : null,
+  nickname: row.nickname,
 });
 
-const COLUMNS = "id, session_id, status, search_until, paired_with, match_id";
+const COLUMNS = "id, session_id, status, search_until, paired_with, match_id, resolved_at, nickname";
 
 function fail(action: string, error: { message: string; code?: string }): never {
   throw new Error(`Could not ${action}: ${error.message}${error.code ? ` (${error.code})` : ""}`);
@@ -35,9 +39,9 @@ function fail(action: string, error: { message: string; code?: string }): never 
 export function supabaseQueueStore(db: Pick<SupabaseClient, "from" | "rpc">): QueueStore {
   const table = () => db.from(QUEUE_TABLE);
   return {
-    async insert(sessionId, searchUntil) {
+    async insert(sessionId, searchUntil, nickname) {
       const { data, error } = await table()
-        .insert({ session_id: sessionId, search_until: new Date(searchUntil).toISOString() })
+        .insert({ session_id: sessionId, search_until: new Date(searchUntil).toISOString(), nickname })
         .select(COLUMNS)
         .single();
       if (error) fail("join the queue", error);

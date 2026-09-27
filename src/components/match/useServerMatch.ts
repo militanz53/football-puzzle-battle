@@ -1,8 +1,18 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { answer, buzzIn, nextMatchRound, rematch as rematchAction, startMatchRound, syncMatch } from "@/app/match/actions";
-import { MATCH_STATE_EVENT, matchChannel } from "@/lib/matchChannel";
+import {
+  answer,
+  buzzIn,
+  nextMatchRound,
+  offerRematch,
+  openMatch,
+  rematch as rematchAction,
+  startMatchRound,
+  stillHere,
+  syncMatch,
+} from "@/app/match/actions";
+import { MATCH_STATE_EVENT } from "@/lib/matchChannel";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import type { MatchView, PublicRound } from "@/server/match/view";
 import { isNewer, notStartedRound, optimisticBuzz, projectRound } from "./display";
@@ -11,6 +21,14 @@ const FRAME_MS = 50;
 /** A little after the announced change, so the server has certainly reached it. */
 const SYNC_MARGIN_MS = 30;
 const RETRY_MS = 1000;
+/** Presence: the server treats a player silent for 5 s as away, 20 s as gone (src/server/match/service.ts). */
+const CHECK_IN_MS = 3_000;
+/** A rematch offer stands 10 s on the server (REMATCH_WINDOW_MS); a little longer here for the last reply. */
+const REMATCH_WAIT_MS = 10_500;
+/** "<Name> left" stays up this long before the new search. */
+const DECLINED_MS = 1_500;
+
+export type RematchState = "idle" | "waiting" | "declined";
 
 /**
  * A match as the server runs it (GDD §27). The browser keeps the latest view it got,
@@ -18,7 +36,10 @@ const RETRY_MS = 1000;
  * actions will arrive later), draws the running round between views, and asks the
  * server again when the round is due to change. It makes no decisions itself.
  */
-export function useServerMatch(initial: MatchView) {
+export function useServerMatch(
+  initial: MatchView,
+  { onSearchAgain, onOpenMatch }: { onSearchAgain: () => void; onOpenMatch: (view: MatchView) => void },
+) {
   // Timestamps are performance.now(); the lazy initialisers run again in the browser on hydration.
   const [latest, setLatest] = useState(() => ({ view: initial, receivedAt: performance.now() }));
   const [frame, setFrame] = useState(() => performance.now());
@@ -45,15 +66,47 @@ export function useServerMatch(initial: MatchView) {
     [accept],
   );
 
-  // Realtime: every write to the match is broadcast on its channel.
+  // Realtime: every write to the match is broadcast, to each player on their own
+  // channel (view.channel): against a real player, this is how their buzz and answer
+  // arrive the moment the server takes them.
+  const channelName = view.channel;
   useEffect(() => {
     const db = getPublicSupabase();
     const channel = db
-      .channel(matchChannel(id))
+      .channel(channelName)
       .on("broadcast", { event: MATCH_STATE_EVENT }, ({ payload }) => accept(payload as MatchView))
       .subscribe();
     return () => void db.removeChannel(channel);
-  }, [id, accept]);
+  }, [channelName, accept]);
+
+  // Check in while the match runs (presence against a real player, §28). A failed
+  // check-in, or the browser going offline, shows "Reconnecting…" until one succeeds.
+  const [reconnecting, setReconnecting] = useState(false);
+  const over = view.match.status === "over";
+  useEffect(() => {
+    if (over) return;
+    const check = () =>
+      void stillHere(id)
+        .then((next) => {
+          setReconnecting(false);
+          if (next) accept(next);
+        })
+        .catch(() => setReconnecting(true));
+    const offline = () => setReconnecting(true);
+    // Back from another tab or app (a phone pauses the page): check in at once.
+    const visible = () => document.visibilityState === "visible" && check();
+    check();
+    const timer = window.setInterval(check, CHECK_IN_MS);
+    window.addEventListener("offline", offline);
+    window.addEventListener("online", check);
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("offline", offline);
+      window.removeEventListener("online", check);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [over, id, accept]);
 
   // Redraw the running round smoothly.
   const running = view.round !== null && !view.round.over;
@@ -113,16 +166,51 @@ export function useServerMatch(initial: MatchView) {
     void call(() => nextMatchRound(id));
   }, [view.match.status, roundKey, call, id]);
 
+  // Rematch. Against the bot: a new match at once. Against a real player (§13.1): an
+  // offer; the match starts when both asked (offerRematch returns it, or it arrives
+  // as view.rematchNext), and if the other never asks, back to the queue.
   const rematching = useRef(false);
+  const [rematchState, setRematchState] = useState<RematchState>("idle");
+  const mutual = view.rematch === "mutual";
   const rematch = useCallback(async () => {
-    if (rematching.current) return; // ignore repeat taps while the new match is drawn
+    if (rematching.current) return; // ignore repeat taps
     rematching.current = true;
-    try {
-      await call(() => rematchAction(id), true);
-    } finally {
-      rematching.current = false;
+    if (!mutual) {
+      try {
+        await call(() => rematchAction(id), true);
+      } finally {
+        rematching.current = false;
+      }
+      return;
     }
-  }, [call, id]);
+    setRematchState("waiting");
+    try {
+      const result = await offerRematch(id);
+      if (result.status === "ready") onOpenMatch(result.view);
+      else accept(result.view);
+    } catch {
+      setRematchState("declined");
+    }
+  }, [mutual, call, id, accept, onOpenMatch]);
 
-  return { view, round, submitting, buzz, submit, next, rematch };
+  // The opponent accepted: open the new match.
+  const nextId = view.rematchNext;
+  useEffect(() => {
+    if (!nextId || rematchState !== "waiting") return;
+    void openMatch(nextId).then(onOpenMatch, () => setRematchState("declined"));
+  }, [nextId, rematchState, onOpenMatch]);
+
+  // Nobody answered: say so, then search for a new opponent.
+  useEffect(() => {
+    if (rematchState === "waiting") {
+      const timer = window.setTimeout(() => setRematchState("declined"), REMATCH_WAIT_MS);
+      return () => window.clearTimeout(timer);
+    }
+    if (rematchState === "declined") {
+      const timer = window.setTimeout(onSearchAgain, DECLINED_MS);
+      return () => window.clearTimeout(timer);
+    }
+  }, [rematchState, onSearchAgain]);
+
+  return { view, round, submitting, buzz, submit, next, rematch, rematchState, reconnecting, receivedAt };
 }

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { findOpponent, pollOpponent, stopSearching } from "@/app/match/actions";
+import { useCallback, useEffect, useState } from "react";
+import { findOpponent, pollOpponent, resumeMatch, stopSearching } from "@/app/match/actions";
 import type { NameEntry } from "@/data/names";
 import type { MatchView } from "@/server/match/view";
 import { MatchScreen } from "./MatchScreen";
@@ -78,6 +78,14 @@ function Found({ name }: { name: string }) {
  */
 export function QuickMatch({ names }: { names: NameEntry[] }) {
   const [phase, setPhase] = useState<Phase>({ kind: "searching" });
+  /** Bumped to search again (a rematch offer nobody answered). */
+  const [search, setSearch] = useState(0);
+  // Stable, because the match screen's timers depend on them.
+  const searchAgain = useCallback(() => {
+    setPhase({ kind: "searching" });
+    setSearch((n) => n + 1);
+  }, []);
+  const openMatch = useCallback((view: MatchView) => setPhase({ kind: "playing", view }), []);
 
   useEffect(() => {
     let cancelled = false;
@@ -85,6 +93,16 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
     let settled = false;
 
     (async () => {
+      // A real-player match this browser is still in (a reload, a reopened tab): back into it (§28).
+      if (search === 0) {
+        const resumed = await resumeMatch();
+        if (cancelled) return;
+        if (resumed) {
+          settled = true;
+          setPhase({ kind: "playing", view: resumed });
+          return;
+        }
+      }
       const joined = await findOpponent();
       entryId = joined.entryId;
       // Unmounted while joining (e.g. React re-running effects in development): leave.
@@ -106,7 +124,7 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
       cancelled = true;
       if (entryId && !settled) void stopSearching(entryId).catch(() => {});
     };
-  }, []);
+  }, [search]);
 
   useEffect(() => {
     if (phase.kind !== "found") return;
@@ -114,7 +132,17 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
     return () => window.clearTimeout(timer);
   }, [phase]);
 
-  if (phase.kind === "playing") return <MatchScreen initialView={phase.view} names={names} />;
+  if (phase.kind === "playing") {
+    return (
+      <MatchScreen
+        key={phase.view.id}
+        initialView={phase.view}
+        names={names}
+        onSearchAgain={searchAgain}
+        onOpenMatch={openMatch}
+      />
+    );
+  }
 
   return (
     <main className="flex flex-1 justify-center px-5">

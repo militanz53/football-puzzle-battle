@@ -135,3 +135,68 @@ describe("msUntilNextChange", () => {
     expect(msUntilNextChange(careerPuzzle, timeline(), 16_000, false)).toBeNull();
   });
 });
+
+describe("a real opponent (botPlan null): their buzz and answer come as events", () => {
+  const human = (events: TimelineEvent[]): RoundTimeline => ({ startedAt: 1_000_000, botPlan: null, events });
+  const humanAt = (ms: number, events: TimelineEvent[], suddenDeath = false) => replayRound(careerPuzzle, human(events), ms, suddenDeath);
+  const theirBuzz = (ms: number): TimelineEvent => ({ at: ms, type: "buzz", side: "bot" });
+  const theirAnswer = (ms: number, text: string): TimelineEvent => ({ at: ms, type: "submit", text, side: "bot" });
+
+  it("never buzzes on its own", () => {
+    const { state, finishedAtMs } = humanAt(20_000, []);
+    expect(finishedAtMs).toBe(15_000);
+    expect(state.round.bot).toEqual({ kind: "no-buzz" });
+  });
+
+  it("buzzes when their request arrives, freezing the clock, and scores by the reveal (§8)", () => {
+    const answering = humanAt(4_000, [theirBuzz(3_500)]);
+    expect(answering.state.round).toMatchObject({ answering: "bot", clockMs: 3_500, bot: { kind: "answering", reveal: 2 } });
+    expect(answering.state.botBuzzMs).toBe(3_500);
+    const done = humanAt(6_000, [theirBuzz(3_500), theirAnswer(5_000, "ibra")]);
+    expect(done.state.round.bot).toEqual({ kind: "correct", reveal: 2, points: 800, answer: "ibra" });
+    expect(done.state.round.clockMs).toBe(4_500); // stood at 3.5 s for the 1.5 s they answered
+  });
+
+  it("checks their answer like the player's (§26.1) and keeps what they typed", () => {
+    const { state } = humanAt(6_000, [theirBuzz(1_000), theirAnswer(2_000, "Messi")]);
+    expect(state.round.bot).toEqual({ kind: "wrong", reveal: 1, answer: "Messi", timedOut: false });
+  });
+
+  it("times their answer out after 8 s, like the player's (§7)", () => {
+    const { state } = humanAt(10_000, [theirBuzz(1_000)]);
+    expect(state.round.bot).toEqual({ kind: "wrong", reveal: 1, timedOut: true });
+  });
+
+  it("makes answering exclusive both ways: the second buzz does not count", () => {
+    const theyFirst = humanAt(3_000, [theirBuzz(1_000), buzz(1_500)]);
+    expect(theyFirst.state.round.answering).toBe("bot");
+    expect(theyFirst.state.round.player.kind).toBe("waiting");
+
+    const playerFirst = humanAt(3_000, [buzz(1_000), theirBuzz(1_500)]);
+    expect(playerFirst.state.round.answering).toBe("player");
+    expect(playerFirst.state.round.bot.kind).toBe("waiting");
+  });
+
+  it("lets both score in one round (§39), whoever buzzes first", () => {
+    const { state, finishedAtMs } = humanAt(30_000, [buzz(500), submit(1_000, "Ibra"), theirBuzz(4_000), theirAnswer(5_000, "Zlatan")]);
+    expect(state.round.player).toMatchObject({ kind: "correct", points: 1000 });
+    expect(state.round.bot).toMatchObject({ kind: "correct", points: 800 });
+    expect(finishedAtMs).toBe(5_000);
+  });
+
+  it("ends Sudden Death at their correct answer if it comes first (§12.1)", () => {
+    const { state, finishedAtMs } = humanAt(30_000, [theirBuzz(700), theirAnswer(1_400, "Ibra")], true);
+    expect(state.firstCorrect).toBe("bot");
+    expect(finishedAtMs).toBe(1_400);
+  });
+
+  it("ignores opponent events in a bot match: the bot keeps to its plan", () => {
+    const withBot = replayRound(careerPuzzle, timeline([theirBuzz(500)]), 2_000, false);
+    expect(withBot.state.round.bot.kind).toBe("waiting");
+  });
+
+  it("does not wait on a real opponent in msUntilNextChange", () => {
+    const wait = msUntilNextChange(careerPuzzle, human([]), 1_000, false)!;
+    expect(Math.abs(wait - 14_000)).toBeLessThanOrEqual(STEP_MS);
+  });
+});

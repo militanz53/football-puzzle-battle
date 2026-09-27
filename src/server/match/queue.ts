@@ -4,17 +4,21 @@ import type { MatchView } from "./view";
 
 // Quick Match (GDD §13.1). PLAY joins a queue; while the player's screen polls, the
 // server looks for another waiting player. If one is found both entries are marked
-// "paired" (the real-opponent path; playing against each other needs opponent events
-// in the engine, the next step, so for now each still plays the engine's opponent).
-// If nobody turns up within the search window the entry times out and the bot takes
-// the match under a random nickname. Whether the opponent was a bot is stored in the
-// tables only (match_queue.status, matches.opponent_kind), never shown.
+// "paired" and the two play ONE match against each other (seat a / seat b). If nobody
+// turns up within the search window the entry times out and the bot takes the match
+// under a random nickname. Whether the opponent was a bot is stored in the tables
+// only (match_queue.status, matches.opponent_kind), never shown.
 
 /** The search lasts a random 5-10 s (7.5 s on average), like a real queue would. */
 export const SEARCH_MIN_MS = 5_000;
 export const SEARCH_MAX_MS = 10_000;
 /** A waiting entry is only paired while its screen is still polling. */
 export const FRESH_SECONDS = 5;
+/**
+ * Once paired, one of the two builds the shared match. If the other has not seen it
+ * after this long (the builder's tab closed at that moment), they play the bot instead.
+ */
+export const HANDOFF_MS = 8_000;
 
 export type QueueStatus = "waiting" | "paired" | "timed_out" | "abandoned";
 
@@ -26,11 +30,15 @@ export interface QueueEntry {
   searchUntil: number;
   pairedWith: string | null;
   matchId: string | null;
+  /** When the entry was paired or timed out (epoch ms), or null while waiting. */
+  resolvedAt: number | null;
+  /** The player's nickname (§13.2), shown to a real opponent. */
+  nickname: string | null;
 }
 
 /** The match_queue table (./queueStore.ts), or an in-memory stand-in in tests. */
 export interface QueueStore {
-  insert(sessionId: string, searchUntil: number): Promise<QueueEntry>;
+  insert(sessionId: string, searchUntil: number, nickname: string): Promise<QueueEntry>;
   get(id: string): Promise<QueueEntry | null>;
   /** The entry's screen is still polling. */
   touch(id: string): Promise<void>;
@@ -48,6 +56,8 @@ export interface QueueDeps {
   rng: Rng;
   /** Creates the match against the engine's opponent and returns its view. */
   createMatch: (opponentName: string, queueEntryId: string) => Promise<MatchView>;
+  /** Creates one match for two paired players and returns it as seat a sees it. */
+  createRealMatch: (a: { sessionId: string; name: string }, b: { sessionId: string; name: string }) => Promise<MatchView>;
   /** The view of a match already created for this entry. */
   viewMatch: (matchId: string) => Promise<MatchView>;
 }
@@ -64,9 +74,9 @@ export class QueueAccessError extends Error {
   }
 }
 
-export async function joinQueue(sessionId: string, deps: QueueDeps): Promise<QueueEntry> {
+export async function joinQueue(sessionId: string, nickname: string, deps: QueueDeps): Promise<QueueEntry> {
   const searchMs = SEARCH_MIN_MS + Math.floor(deps.rng() * (SEARCH_MAX_MS - SEARCH_MIN_MS + 1));
-  return deps.store.insert(sessionId, deps.now() + searchMs);
+  return deps.store.insert(sessionId, deps.now() + searchMs, nickname);
 }
 
 /**
@@ -83,7 +93,7 @@ export async function pollQueue(entryId: string, sessionId: string, deps: QueueD
     await deps.store.touch(entry.id);
     const partner = await deps.store.claimPartner(entry.id, FRESH_SECONDS);
     if (partner) {
-      entry = { ...entry, status: "paired", pairedWith: partner };
+      entry = { ...entry, status: "paired", pairedWith: partner, resolvedAt: deps.now() };
     } else if (deps.now() < entry.searchUntil) {
       return { status: "searching" };
     } else if (!(await deps.store.resolve(entry.id, "timed_out"))) {
@@ -92,7 +102,25 @@ export async function pollQueue(entryId: string, sessionId: string, deps: QueueD
     }
   }
 
-  // Paired or timed out: this entry's match. The engine's opponent plays it for now.
+  if (entry.status === "paired" && entry.pairedWith) {
+    const partner = await deps.store.get(entry.pairedWith);
+    // One match for both. The entry with the smaller id builds it (a fixed choice, so
+    // the two never both build one) and links both entries to it; the other waits.
+    if (partner && entry.id < partner.id) {
+      // Each sees the other's own nickname (§13.2); an entry from before nicknames gets a made-up one.
+      const view = await deps.createRealMatch(
+        { sessionId: entry.sessionId, name: entry.nickname ?? randomNickname(deps.rng) },
+        { sessionId: partner.sessionId, name: partner.nickname ?? randomNickname(deps.rng) },
+      );
+      await deps.store.setMatch(entry.id, view.id);
+      await deps.store.setMatch(partner.id, view.id);
+      return { status: "found", view };
+    }
+    if (partner && deps.now() - (entry.resolvedAt ?? deps.now()) < HANDOFF_MS) return { status: "searching" };
+    // The builder never came back with the match: play the bot rather than wait forever.
+  }
+
+  // Timed out (or the pairing fell through): this entry's match against the bot.
   const view = await deps.createMatch(randomNickname(deps.rng), entry.id);
   if (!(await deps.store.setMatch(entry.id, view.id))) {
     const winner = await deps.store.get(entry.id);

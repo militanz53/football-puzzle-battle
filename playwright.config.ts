@@ -6,7 +6,9 @@ import { defineConfig, devices } from "@playwright/test";
 const nodeEnv = process.env.NODE_ENV;
 Object.assign(process.env, { NODE_ENV: "development" });
 loadEnvConfig(process.cwd(), true);
-Object.assign(process.env, { NODE_ENV: nodeEnv });
+// Put it back exactly: assigning undefined would store the string "undefined".
+if (nodeEnv === undefined) delete (process.env as Record<string, string | undefined>).NODE_ENV;
+else Object.assign(process.env, { NODE_ENV: nodeEnv });
 
 // End-to-end tests of the MVP 0.1 match (§29, §40). Rounds run on the real 3 s
 // reveal clock, so a test takes one to two minutes.

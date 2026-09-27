@@ -62,7 +62,13 @@ export const test = base.extend<{ log: LogEntry[]; shot: (name: string) => Promi
     let n = 0;
     await provide(async (name: string) => {
       n += 1;
-      await page.screenshot({ path: path.join(dir, `${String(n).padStart(2, "0")}-${slugify(name)}.png`), fullPage: true });
+      // caret: "initial": hiding the caret would restyle inputs, and a shot taken before
+      // hydration then shows up as a false hydration mismatch in the console log.
+      await page.screenshot({
+        path: path.join(dir, `${String(n).padStart(2, "0")}-${slugify(name)}.png`),
+        fullPage: true,
+        caret: "initial",
+      });
     });
   },
 });

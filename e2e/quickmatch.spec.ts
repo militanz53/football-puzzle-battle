@@ -50,7 +50,7 @@ test("searching, then a named opponent, and never a mention of a bot", async ({ 
   });
 });
 
-test("two players who press PLAY together are paired with each other", async ({ browser }) => {
+test("two players who press PLAY together are paired into one shared match", async ({ browser }) => {
   // Separate contexts = separate browsers = separate anonymous sessions.
   const [a, b] = await Promise.all([browser.newContext(), browser.newContext()]);
   const [pageA, pageB] = await Promise.all([a.newPage(), b.newPage()]);
@@ -61,13 +61,13 @@ test("two players who press PLAY together are paired with each other", async ({ 
   expect(nameB).not.toMatch(/bot/i);
 
   const [idA, idB] = await Promise.all([matchIdOnScreen(pageA), matchIdOnScreen(pageB)]);
-  const { data } = await db.from("matches").select("id, queue_entry_id").in("id", [idA, idB]);
-  const entries = data!.map((m) => m.queue_entry_id as string);
-  const { data: queue } = await db.from("match_queue").select("id, status, paired_with").in("id", entries);
+  baseExpect(idA).toBe(idB); // one match row for both
+  const { data: match } = await db.from("matches").select("opponent_kind, players").eq("id", idA).single();
+  baseExpect(match?.opponent_kind).toBe("human");
+  const { data: queue } = await db.from("match_queue").select("id, status, paired_with, match_id").eq("match_id", idA);
   baseExpect(queue).toHaveLength(2);
   for (const row of queue!) {
     baseExpect(row.status).toBe("paired");
-    baseExpect(entries).toContain(row.paired_with);
     baseExpect(row.paired_with).not.toBe(row.id);
   }
   await Promise.all([a.close(), b.close()]);

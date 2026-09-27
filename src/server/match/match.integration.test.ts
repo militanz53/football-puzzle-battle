@@ -61,7 +61,7 @@ describe("Realtime", () => {
         })
         .subscribe(async (status) => {
           if (status === "SUBSCRIBED") {
-            await broadcastMatchView({ id, version: 7 } as MatchView, getServerSupabase());
+            await broadcastMatchView({ id, version: 7, channel: matchChannel(id) } as MatchView, getServerSupabase());
           }
         });
     });
@@ -73,7 +73,7 @@ describe("match_queue (claim_queue_partner)", () => {
   const entries: string[] = [];
   const store = () => supabaseQueueStore(getServerSupabase());
   const join = async (session: string) => {
-    const entry = await store().insert(session, Date.now() + 20_000);
+    const entry = await store().insert(session, Date.now() + 20_000, "Player_0001");
     entries.push(entry.id);
     return entry;
   };
@@ -112,5 +112,34 @@ describe("match_queue (claim_queue_partner)", () => {
     const rpc = await getPublicSupabase().rpc("claim_queue_partner", { p_entry: crypto.randomUUID(), p_fresh_seconds: 5 });
     expect(read.error?.code).toBe("42501");
     expect(rpc.error).not.toBeNull();
+  });
+});
+
+describe("a match between two real players", () => {
+  it("delivers seat a's buzz to seat b on seat b's own channel, as seat b sees it", async () => {
+    const deps = defaultDeps();
+    const players = { a: { session: "it-seat-a", name: "Emre_34" }, b: { session: "it-seat-b", name: "Can2004" }, since: Date.now() };
+    const view = await createMatch(deps, "Can2004", { opponentKind: "human", queueEntryId: null, playerSession: "it-seat-a", opponentSession: "it-seat-b" }, players);
+    created.push(view.id);
+    await runOnMatch(view.id, startRound, deps, "it-seat-a");
+
+    const db = getPublicSupabase();
+    const seenByB = new Promise<MatchView>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error("seat b heard nothing within 10 s")), 10_000);
+      const channel = db
+        .channel(matchChannel(view.id, "b"))
+        .on("broadcast", { event: MATCH_STATE_EVENT }, ({ payload }) => {
+          clearTimeout(timer);
+          void db.removeChannel(channel);
+          resolve(payload as MatchView);
+        })
+        .subscribe(async (status) => {
+          if (status === "SUBSCRIBED") await runOnMatch(view.id, (r, c) => buzz(r, c, "player"), deps, "it-seat-a");
+        });
+    });
+    const b = await seenByB;
+    expect(b.opponentName).toBe("Emre_34");
+    expect(b.round?.bot.kind).toBe("answering"); // seat a, the opponent from b's side, is answering
+    expect(b.round?.player.kind).toBe("waiting");
   });
 });

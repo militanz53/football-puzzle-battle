@@ -2,7 +2,9 @@
 // PLAY opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
 
 import Link from "next/link";
+import { NicknameField } from "@/components/NicknameField";
 import { SoundToggle } from "@/components/sound/SoundToggle";
+import { readIdentity } from "@/lib/session";
 
 function Logo() {
   return (
@@ -36,7 +38,9 @@ function Logo() {
   );
 }
 
-export default function MainMenu() {
+export default async function MainMenu() {
+  // The nickname lives in the session cookie, so the menu renders per request.
+  const identity = await readIdentity();
   return (
     <main className="relative flex flex-1 justify-center overflow-hidden px-6">
       <div className="relative flex w-full max-w-[390px] flex-col justify-between py-16">
@@ -45,6 +49,10 @@ export default function MainMenu() {
         </div>
         <div className="flex flex-1 items-center justify-center pb-10">
           <Logo />
+        </div>
+
+        <div className="mb-4">
+          <NicknameField current={identity?.name ?? null} />
         </div>
 
         <nav className="flex flex-col gap-3" aria-label="Main menu">

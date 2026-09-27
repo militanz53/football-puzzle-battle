@@ -30,6 +30,7 @@ class Query implements PromiseLike<Result> {
   private filters: { label: string; test: (r: Row) => boolean }[] = [];
   private window: [number, number] | null = null;
   private orderBy: string | null = null;
+  private descending = false;
 
   constructor(
     private readonly table: FakeTable,
@@ -57,12 +58,31 @@ class Query implements PromiseLike<Result> {
     this.filters.push({ label: `${column}=${String(value)}`, test: (r) => r[column] === value });
     return this;
   }
+  neq(column: string, value: unknown) {
+    this.filters.push({ label: `${column}!=${String(value)}`, test: (r) => r[column] !== value });
+    return this;
+  }
+  gte(column: string, value: string | number) {
+    this.filters.push({ label: `${column}>=${value}`, test: (r) => String(r[column]) >= String(value) });
+    return this;
+  }
+  /** PostgREST or(): only "column.eq.value" terms, comma-separated. */
+  or(expression: string) {
+    const terms = expression.split(",").map((t) => t.split(".eq."));
+    this.filters.push({ label: `or(${expression})`, test: (r) => terms.some(([c, v]) => String(r[c]) === v) });
+    return this;
+  }
+  limit(n: number) {
+    this.window = [0, n - 1];
+    return this;
+  }
   in(column: string, values: unknown[]) {
     this.filters.push({ label: `${column} in (${values.join(",")})`, test: (r) => values.includes(r[column]) });
     return this;
   }
-  order(column: string) {
+  order(column: string, options?: { ascending?: boolean }) {
     this.orderBy = column;
+    this.descending = options?.ascending === false;
     return this;
   }
   range(from: number, to: number) {
@@ -93,7 +113,7 @@ class Query implements PromiseLike<Result> {
         let found = t.rows.filter(matches);
         if (this.orderBy) {
           const key = this.orderBy;
-          found = [...found].sort((a, b) => String(a[key]).localeCompare(String(b[key])));
+          found = [...found].sort((a, b) => String(a[key]).localeCompare(String(b[key])) * (this.descending ? -1 : 1));
         }
         if (this.window) found = found.slice(this.window[0], this.window[1] + 1);
         return { data: found.map((r) => ({ ...r })), error: null, status: 200 };
