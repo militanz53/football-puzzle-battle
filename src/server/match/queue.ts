@@ -10,9 +10,9 @@ import type { MatchView } from "./view";
 // the match under a random nickname. Whether the opponent was a bot is stored in the
 // tables only (match_queue.status, matches.opponent_kind), never shown.
 
-/** The search lasts a random 15-20 s, like a real queue would. */
-export const SEARCH_MIN_MS = 15_000;
-export const SEARCH_MAX_MS = 20_000;
+/** The search lasts a random 5-10 s (7.5 s on average), like a real queue would. */
+export const SEARCH_MIN_MS = 5_000;
+export const SEARCH_MAX_MS = 10_000;
 /** A waiting entry is only paired while its screen is still polling. */
 export const FRESH_SECONDS = 5;
 

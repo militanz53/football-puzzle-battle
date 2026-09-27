@@ -79,7 +79,8 @@ function setup() {
 }
 
 describe("Quick Match queue", () => {
-  it("searches for a random 15-20 s", async () => {
+  it("searches for a random 5-10 s", async () => {
+    expect([SEARCH_MIN_MS, SEARCH_MAX_MS]).toEqual([5_000, 10_000]);
     const { deps } = setup();
     const windows = await Promise.all(
       Array.from({ length: 50 }, async () => (await joinQueue("s", deps)).searchUntil - deps.now()),
@@ -136,6 +137,8 @@ describe("Quick Match queue", () => {
   it("skips a player whose screen stopped polling (tab closed)", async () => {
     const { deps, rows, wait } = setup();
     const gone = await joinQueue("alice", deps);
+    // Still inside their search window, so only the missing polls can rule them out.
+    rows.get(gone.id)!.searchUntil = deps.now() + 60_000;
     wait((FRESH_SECONDS + 1) * 1000);
     const b = await joinQueue("bob", deps);
     expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });

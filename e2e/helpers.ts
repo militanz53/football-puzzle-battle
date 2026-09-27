@@ -89,8 +89,8 @@ export const TYPE_LABEL: Record<PuzzleType, string> = {
 export const nextButton = (page: Page) =>
   page.getByRole("button", { name: /^(Next round|See match result|Sudden death)$/ });
 
-/** Quick Match searches 15-20 s before the bot takes the match (src/server/match/queue.ts). */
-export const MATCHMAKING_TIMEOUT = 35_000;
+/** Quick Match searches 5-10 s before the bot takes the match (src/server/match/queue.ts), plus slack. */
+export const MATCHMAKING_TIMEOUT = 20_000;
 
 /** After PLAY: the searching screen, then "Opponent found", then round 1. Returns the opponent's name. */
 export async function waitForOpponent(page: Page): Promise<string> {
