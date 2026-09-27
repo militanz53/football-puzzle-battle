@@ -161,7 +161,7 @@ test("nicknames, a rematch both players accept, and a rematch nobody answers", a
     await Promise.all([a.goto("/"), b.goto("/")]);
     await a.getByLabel("Nickname").fill("Alpha_1");
     await a.getByLabel("Nickname").press("Enter");
-    await expect(a.getByText("Saved")).toBeVisible();
+    await expect(a.getByRole("status").filter({ hasText: "Nickname saved" })).toBeAttached();
     await a.screenshot({ path: "e2e/artifacts/screenshots/versus-nickname-menu.png" });
   });
 

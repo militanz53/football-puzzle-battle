@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { NicknameField } from "@/components/NicknameField";
 import { SoundToggle } from "@/components/sound/SoundToggle";
+import { randomPlayerName } from "@/lib/nickname";
 import { readIdentity } from "@/lib/session";
 
 function Logo() {
@@ -47,12 +48,13 @@ export default async function MainMenu() {
         <div className="absolute right-0 top-4">
           <SoundToggle />
         </div>
-        <div className="flex flex-1 items-center justify-center pb-10">
+        <div className="flex flex-1 items-center justify-center pb-12">
           <Logo />
         </div>
 
-        <div className="mb-4">
-          <NicknameField current={identity?.name ?? null} />
+        <div className="mb-8">
+          {/* The placeholder previews the kind of name an empty box gets (drawn here, so it hydrates the same). */}
+          <NicknameField current={identity?.name ?? null} example={randomPlayerName(Math.random)} />
         </div>
 
         <nav className="flex flex-col gap-3" aria-label="Main menu">
