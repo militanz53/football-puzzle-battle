@@ -9,14 +9,16 @@ const RANKED: Players = {
   since: 0,
 };
 
-function finished(players: Players | null, winner: "player" | "bot"): MatchRecord {
-  const record = { id: "m1", ...newMatchRecord([careerPuzzle], "Deniz", players) };
+function finished(players: Players | null, winner: "player" | "bot", mode: MatchRecord["mode"] = "ranked"): MatchRecord {
+  const record = { id: "m1", mode, ...newMatchRecord([careerPuzzle], "Deniz", players) };
   return { ...record, match: { ...record.match, status: "over", winner } };
 }
 
 describe("ranked results", () => {
-  it("knows a ranked match by both seats having an account", () => {
+  it("knows a ranked match by its mode, with an account in both seats", () => {
     expect(isRanked(finished(RANKED, "player"))).toBe(true);
+    expect(isRanked(finished(RANKED, "player", "friendly"))).toBe(false); // two accounts, but friendly
+    expect(needsSettling(finished(RANKED, "player", "friendly"))).toBe(false);
     expect(isRanked(finished(null, "player"))).toBe(false);
     const quick = { a: { session: "sa", name: "A_1" }, b: { session: "sb", name: "B_2" }, since: 0 };
     expect(isRanked(finished(quick, "player"))).toBe(false);

@@ -65,7 +65,10 @@ export function MatchResult({
   rematchState,
   opponentWantsRematch,
   ranked = null,
+  friendly = false,
 }: {
+  /** A friendly match: a rematch nobody answers leads back to the Friends page, not a search. */
+  friendly?: boolean;
   /** Ranked: the rating change replaces nothing, it is added under the headline. */
   ranked?: RankedView | null;
   match: MatchState;
@@ -151,7 +154,7 @@ export function MatchResult({
         )}
         {rematchState === "declined" && (
           <p role="status" className="text-center font-display text-sm font-semibold text-text-secondary">
-            {opponentName} left · finding a new opponent…
+            {opponentName} left · {friendly ? "back to Friends…" : "finding a new opponent…"}
           </p>
         )}
         <button

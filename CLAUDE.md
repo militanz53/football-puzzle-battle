@@ -58,6 +58,15 @@ A parallel system on top of Quick Match; Quick Match, its anonymous nickname and
 - Queue: the same `match_queue` with `mode` = ranked and `user_id`; `claim_queue_partner` pairs only within a mode and never an account with itself. A ranked search never gets the bot: it ends in `no-opponent` (`queue.ts`). `QuickMatch` with `mode="ranked"` is the ranked screen.
 - Match: seats carry `account: { userId, rating }` (the Elo base, rating at match start) and usernames as names; `matches.mode` = ranked. When a ranked match is over, `runner.ts` calls the `settle_ranked_match` SQL function, which applies the Elo changes to both profiles exactly once and stores `ranked_result`; a failure is retried on the next request. `view.ranked` carries usernames, ratings and the viewer's change (Rank up! on the result screen). No rematch in Ranked (`view.rematch` = "queue": Play again searches again).
 
+## Friends and friendly matches (§13.2)
+
+Also accounts only, and parallel to Quick Match and Ranked.
+
+- Tables `friend_requests` (one pending per direction), `friendships` (one row per pair, user_a < user_b) and `challenges`; server-only like profiles. Logic in `src/lib/friends/friends.ts` and `challenges.ts`, Server Functions in `src/app/friends/actions.ts`, page `/friends` (`FriendsPanel`). The browser only ever sees usernames, never user ids.
+- Inbox: each account has a private Realtime broadcast channel whose name is an HMAC of its id (`src/lib/friends/inbox.ts`); the server sends an empty `changed` event and the page asks again (`ChallengeInbox`, on the menu and `/friends`). Invites that arrived while no page was open are rendered by the server.
+- A challenge lives while the challenger waits on `/friends` (their screen checks in every 2 s; stale after 15 s, given up after 60 s). Accepting makes the match directly (`src/server/match/friendly.ts`): challenger in seat a with the browser session they challenged from, accepter in seat b, both with their account, `matches.mode` = friendly. It opens at `/friendly/[id]`.
+- `MatchRecord.mode` (quick / ranked / friendly) comes from `matches.mode`; `isRanked` checks it, so a friendly match, though it has two accounts, is never settled. `view.accounts` names both players by username on the scoreboard; `view.friendly` hides the rating box. Mutual rematch works as in Quick Match and keeps the mode.
+
 ## Adding a puzzle type or puzzle content
 
 - A new type means a `reveal_data` shape in `src/game/types.ts` (added to the `Puzzle` union), a board in `src/components/puzzles/`, cases in `PuzzleBoard` / `PuzzleRecap`, a case in `revealCapacity` in `src/data/content.test.ts`, the type in the table's `type` check (a new migration), a reader in `validatePuzzle` (`src/data/schema.ts`) plus its entry in `schemaGuide.ts`, and a section in the admin form (`src/components/admin/draft.ts`, `TypeFields.tsx`). The engine does not change.

@@ -55,6 +55,13 @@ export interface MatchView {
   opponentAway: { reconnectInMs: number } | null;
   /** Ranked (§13.5, §14): both accounts as the match began, and this viewer's change once it is over. */
   ranked: RankedView | null;
+  /**
+   * A match between two accounts (Ranked or friendly): both usernames and ratings, for
+   * the scoreboard. Quick Match has none (nicknames only).
+   */
+  accounts: Pick<RankedView, "you" | "opponent"> | null;
+  /** A friendly match between friends (§13.2): no rating at stake. */
+  friendly: boolean;
 }
 
 export interface RankedPlayer {
@@ -69,6 +76,16 @@ export interface RankedView {
   opponent: RankedPlayer;
   /** Set once the match is over and both ratings were updated. */
   change: (RatingChange & { tierBefore: RankTier; tierAfter: RankTier }) | null;
+}
+
+function accountsView(record: MatchRecord, seat: Seat): Pick<RankedView, "you" | "opponent"> | null {
+  const players = record.players;
+  if (!players?.a.account || !players.b.account) return null;
+  const side = (s: Seat): RankedPlayer => {
+    const rating = players[s].account!.rating;
+    return { username: players[s].name, rating, tier: tierOf(rating) };
+  };
+  return { you: side(seat), opponent: side(otherSeat(seat)) };
 }
 
 function rankedView(record: MatchRecord, seat: Seat): RankedView | null {
@@ -159,6 +176,8 @@ export function toView(record: MatchRecord, now: number, seat: Seat = "a", seen?
     rematchOffer: rematchOffer(record, now, seat),
     rematchNext: record.rematch?.next ?? null,
     ranked: rankedView(record, seat),
+    accounts: accountsView(record, seat),
+    friendly: record.mode === "friendly",
     opponentAway: (() => {
       if (!players || !seen || match.status === "over") return null;
       const silent = silentFor(players, seen, otherSeat(seat), now);

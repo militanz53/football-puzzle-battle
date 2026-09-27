@@ -5,6 +5,7 @@ import { loadSnapshot } from "@/test/snapshot";
 import { checkIn, createMatch, MatchAccessError, type MatchDeps, MatchNotFoundError, runOnMatch } from "./runner";
 import { buzz, LEAVE_AFTER_MS, requestRematch, START_GRACE_MS, startRound } from "./service";
 import { findActiveRealMatch } from "./store";
+import { friendlyMatchMaker } from "./friendly";
 import type { RankedResult } from "./ranked";
 import type { MatchView } from "./view";
 
@@ -180,7 +181,7 @@ describe("a ranked match (§13.5, §14)", () => {
     b: { session: "sb", name: "Deniz", account: { userId: "user-b", rating: 1410 } },
     since: T0,
   };
-  const RANKED = { opponentKind: "human" as const, queueEntryId: null, playerSession: "sa", opponentSession: "sb", ranked: true };
+  const RANKED = { opponentKind: "human" as const, queueEntryId: null, playerSession: "sa", opponentSession: "sb", mode: "ranked" as const };
 
   /** Seat b goes silent, so seat a wins by forfeit: the quickest way to a finished match. */
   async function playToTheEnd(deps: MatchDeps, advance: (ms: number) => number, id: string) {
@@ -258,5 +259,51 @@ describe("a ranked match (§13.5, §14)", () => {
     expect(view.ranked).toBeNull();
     expect(view.rematch).toBe("mutual");
     expect(deps.settleRanked).not.toHaveBeenCalled();
+  });
+});
+
+describe("a friendly match between friends (§13.2)", () => {
+  const profile = (userId: string, username: string, rating: number) =>
+    ({ userId, username, rating, tier: "Pro", matchesPlayed: 0, matchesWon: 0, matchesLost: 0 }) as const;
+  const ALICE = profile("user-a", "Alice", 1250);
+  const BOB = profile("user-b", "Bob", 1180);
+
+  it("is made with the challenger in seat a, both named by username, stored as friendly", async () => {
+    const { deps, table } = setup();
+    const id = await friendlyMatchMaker(deps)({ session: "sa", profile: ALICE }, { session: "sb", profile: BOB });
+    expect(table.rows[0]).toMatchObject({ id, mode: "friendly", opponent_kind: "human", player_session: "sa", opponent_session: "sb" });
+    const forA = await runOnMatch(id, startRound, deps, "sa");
+    expect(forA).toMatchObject({ friendly: true, ranked: null, rematch: "mutual", opponentName: "Bob" });
+    expect(forA.accounts).toEqual({ you: { username: "Alice", rating: 1250, tier: "Pro" }, opponent: { username: "Bob", rating: 1180, tier: "Semi-Pro" } });
+    const forB = await runOnMatch(id, (r) => ({ record: r, changed: false }), deps, "sb");
+    expect(forB.accounts?.you.username).toBe("Bob");
+    expect(forB.opponentName).toBe("Alice");
+  });
+
+  it("never changes ratings: nothing is settled when it ends", async () => {
+    const { deps, advance } = setup();
+    const id = await friendlyMatchMaker(deps)({ session: "sa", profile: ALICE }, { session: "sb", profile: BOB });
+    await runOnMatch(id, startRound, deps, "sa");
+    advance(START_GRACE_MS + LEAVE_AFTER_MS + 1_000);
+    const over = await checkIn(id, "sa", deps);
+    expect(over).toMatchObject({ match: { status: "over", winner: "player" }, ranked: null, friendly: true });
+    await runOnMatch(id, (r) => ({ record: r, changed: false }), deps, "sb");
+    expect(deps.settleRanked).not.toHaveBeenCalled();
+  });
+
+  it("offers the mutual rematch, as Quick Match does", async () => {
+    const { deps, advance } = setup();
+    const id = await friendlyMatchMaker(deps)({ session: "sa", profile: ALICE }, { session: "sb", profile: BOB });
+    await runOnMatch(id, startRound, deps, "sa");
+    advance(START_GRACE_MS + LEAVE_AFTER_MS + 1_000);
+    await checkIn(id, "sa", deps);
+    const view = await runOnMatch(id, (r, c, seat) => requestRematch(r, c.now, seat), deps, "sa");
+    expect(view.rematchOffer).toMatchObject({ you: true, opponent: false });
+  });
+
+  it("refuses browsers that hold neither seat", async () => {
+    const { deps } = setup();
+    const id = await friendlyMatchMaker(deps)({ session: "sa", profile: ALICE }, { session: "sb", profile: BOB });
+    await expect(runOnMatch(id, startRound, deps, "someone-else")).rejects.toBeInstanceOf(MatchAccessError);
   });
 });

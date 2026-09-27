@@ -20,6 +20,8 @@ export interface FakeTable {
   failNext?: { code: string; message: string };
   /** Unique keys besides `id` (e.g. lower(username)); a clash fails with 23505, like Postgres. */
   unique?: ((row: Row) => unknown)[];
+  /** Column defaults filled in on insert (e.g. an id), like the table's own. */
+  defaults?: () => Row;
 }
 
 export function fakeTable(rows: Row[] = []): FakeTable {
@@ -68,10 +70,19 @@ class Query implements PromiseLike<Result> {
     this.filters.push({ label: `${column}>=${value}`, test: (r) => String(r[column]) >= String(value) });
     return this;
   }
-  /** Case-insensitive match; only escaped wildcards (\_, \%), i.e. equality ignoring case. */
+  /** Case-insensitive LIKE: % and _ are wildcards, a backslash escapes them. */
   ilike(column: string, pattern: string) {
-    const wanted = pattern.replace(/\\(.)/g, "$1").toLowerCase();
-    this.filters.push({ label: `${column} ilike ${pattern}`, test: (r) => String(r[column]).toLowerCase() === wanted });
+    const literal = (c: string) => c.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    let source = "";
+    for (let i = 0; i < pattern.length; i++) {
+      const c = pattern[i];
+      if (c === "\\" && i + 1 < pattern.length) source += literal(pattern[++i]);
+      else if (c === "%") source += ".*";
+      else if (c === "_") source += ".";
+      else source += literal(c);
+    }
+    const like = new RegExp(`^${source}$`, "is");
+    this.filters.push({ label: `${column} ilike ${pattern}`, test: (r) => like.test(String(r[column])) });
     return this;
   }
   /** PostgREST or(): only "column.eq.value" terms, comma-separated. */
@@ -127,7 +138,7 @@ class Query implements PromiseLike<Result> {
         return { data: found.map((r) => ({ ...r })), error: null, status: 200 };
       }
       case "insert": {
-        const incoming = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((r) => ({ ...r }));
+        const incoming = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((r) => ({ ...t.defaults?.(), ...r }));
         const ids = new Set(t.rows.map((r) => r.id));
         const keys = (t.unique ?? []).map((key) => new Set(t.rows.map(key)));
         for (const r of incoming) {
@@ -152,6 +163,16 @@ class Query implements PromiseLike<Result> {
       }
     }
   }
+}
+
+/** A client over several tables by name (secret key rights). */
+export function fakeDatabase(tables: Record<string, FakeTable>): Pick<SupabaseClient, "from"> {
+  return {
+    from: (name: string) => {
+      if (!tables[name]) throw new Error(`fakeDatabase has no table "${name}"`);
+      return new Query(tables[name], "secret");
+    },
+  } as unknown as Pick<SupabaseClient, "from">;
 }
 
 /** A client whose `from("puzzles")` runs against `table` with the given key's rights. */

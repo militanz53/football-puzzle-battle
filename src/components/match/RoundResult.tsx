@@ -99,7 +99,7 @@ export function RoundResult({
 }: {
   record: RoundRecord;
   opponentName: string;
-  ranked?: RankedView | null;
+  ranked?: Pick<RankedView, "you" | "opponent"> | null;
   totals: Record<Side, number>;
   nextLabel: string;
   delayMs: number;

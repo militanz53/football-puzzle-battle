@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchState } from "@/game/match";
 import type { RoundTimeline } from "@/game/timeline";
 import type { RankedResult } from "./ranked";
-import type { MatchRecord, Players, Seat } from "./service";
+import type { MatchMode, MatchRecord, Players, Seat } from "./service";
 import { summaryColumns } from "./view";
 
 // The `matches` table (supabase/migrations/…_create_matches.sql). Server only, with
@@ -16,6 +16,7 @@ export type Db = Pick<SupabaseClient, "from">;
 
 interface MatchRow {
   id: string;
+  mode: MatchMode;
   version: number;
   state: MatchState;
   round: RoundTimeline | null;
@@ -36,8 +37,8 @@ export interface MatchOrigin {
   playerSession: string | null;
   /** Seat b's session, for a real-player match. */
   opponentSession?: string | null;
-  /** A ranked match between two accounts (§13.5); Quick Match leaves the column's default. */
-  ranked?: boolean;
+  /** Ranked or friendly; Quick Match leaves the column's default. */
+  mode?: MatchMode;
 }
 
 export class MatchStoreError extends Error {
@@ -62,7 +63,7 @@ export async function insertMatch(record: MatchRecord, origin: MatchOrigin, now:
     queue_entry_id: origin.queueEntryId,
     player_session: origin.playerSession,
     opponent_session: origin.opponentSession ?? null,
-    ...(origin.ranked ? { mode: "ranked" } : {}),
+    ...(origin.mode && origin.mode !== "quick" ? { mode: origin.mode } : {}),
   });
   if (error) throw new MatchStoreError("create the match", error);
 }
@@ -79,7 +80,7 @@ export async function loadMatchWithPresence(
 ): Promise<{ record: MatchRecord; seen: Record<Seat, number | null> } | null> {
   const { data, error } = await db
     .from(MATCHES_TABLE)
-    .select("id, version, state, round, opponent_name, players, ended, rematch, ranked_result, seat_a_seen_at, seat_b_seen_at")
+    .select("id, mode, version, state, round, opponent_name, players, ended, rematch, ranked_result, seat_a_seen_at, seat_b_seen_at")
     .eq("id", id);
   if (error) throw new MatchStoreError("load the match", error);
   const row = (data as MatchRow[])[0];
@@ -88,6 +89,7 @@ export async function loadMatchWithPresence(
   return {
     record: {
       id: row.id,
+      mode: row.mode,
       version: row.version,
       match: row.state,
       round: row.round,

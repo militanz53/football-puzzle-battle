@@ -8,8 +8,9 @@ import type { MatchRecord, Seat } from "./service";
 
 export type RankedResult = Record<Seat, RatingChange>;
 
+/** A ranked match: its mode, never just two accounts (a friendly match has those too). */
 export function isRanked(record: MatchRecord): boolean {
-  return Boolean(record.players?.a.account && record.players?.b.account);
+  return record.mode === "ranked" && Boolean(record.players?.a.account && record.players?.b.account);
 }
 
 /** The rating changes for a finished ranked match, or null if there is nothing to settle. */

@@ -110,12 +110,14 @@ export async function offerRematch(id: string): Promise<{ status: "waiting"; vie
   if (offered.rematchNext) return { status: "ready", view: await viewMatch(offered.rematchNext, deps, session) };
   if (!bothAsked) return { status: "waiting", view: offered };
 
-  // Both asked: a new match between the same two players, seats and nicknames kept.
-  const players = (await loadMatchWithPresence(matchId, deps.db))!.record.players!;
+  // Both asked: a new match between the same two players, seats, names and mode kept
+  // (a friendly match's rematch is friendly too).
+  const { players: seats, mode } = (await loadMatchWithPresence(matchId, deps.db))!.record;
+  const players = seats!;
   const next = await createMatch(
     deps,
     players.b.name,
-    { opponentKind: "human", queueEntryId: null, playerSession: players.a.session, opponentSession: players.b.session },
+    { opponentKind: "human", queueEntryId: null, playerSession: players.a.session, opponentSession: players.b.session, mode },
     { ...players, since: deps.now() },
   );
   // If the opponent linked a rematch a moment earlier, both follow theirs.

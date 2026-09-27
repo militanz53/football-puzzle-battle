@@ -108,7 +108,7 @@ export async function createMatch(
   players: Players | null = null,
 ): Promise<MatchView> {
   const schedule = buildSchedule(await deps.loadPool(), deps.rng);
-  const record: MatchRecord = { id: crypto.randomUUID(), ...newMatchRecord(schedule, opponentName, players) };
+  const record: MatchRecord = { id: crypto.randomUUID(), mode: origin.mode ?? "quick", ...newMatchRecord(schedule, opponentName, players) };
   const now = deps.now();
   await insertMatch(record, origin, now, deps.db);
   return toView(record, now);

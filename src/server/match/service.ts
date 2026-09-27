@@ -10,8 +10,13 @@ import { isRanked, type RankedResult } from "./ranked";
 // server clock and a random source; the engine (src/game) does the actual rules.
 // Persistence and Realtime are in ./runner.ts, not here, so this is easy to test.
 
+/** Quick Match (§13.1), Ranked (§13.5) or a friendly match between two friends (§13.2). */
+export type MatchMode = "quick" | "ranked" | "friendly";
+
 export interface MatchRecord {
   id: string;
+  /** Absent in records made before modes existed: Quick Match. */
+  mode?: MatchMode;
   /** Bumped on every write (optimistic concurrency, see ./store.ts). */
   version: number;
   /** The match layer's own state; puzzles here include their answers. */

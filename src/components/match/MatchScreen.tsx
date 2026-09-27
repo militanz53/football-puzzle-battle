@@ -179,7 +179,7 @@ export function MatchScreen({
             onBuzz={buzz}
             onSubmit={submit}
             opponentName={view.opponentName}
-            ranked={view.ranked}
+            ranked={view.ranked ?? view.accounts}
           />
         )}
 
@@ -192,7 +192,7 @@ export function MatchScreen({
             delayMs={NEXT_ROUND_DELAY_MS}
             onNext={next}
             opponentName={view.opponentName}
-            ranked={view.ranked}
+            ranked={view.ranked ?? view.accounts}
           />
         )}
 
@@ -204,6 +204,7 @@ export function MatchScreen({
             rematchState={rematchState}
             opponentWantsRematch={Boolean(view.rematchOffer?.opponent)}
             ranked={view.ranked}
+            friendly={view.friendly}
           />}
       </div>
     </main>

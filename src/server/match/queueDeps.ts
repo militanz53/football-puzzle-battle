@@ -24,7 +24,7 @@ async function createRankedMatch(deps: MatchDeps, a: QueuedPlayer, b: QueuedPlay
   return createMatch(
     deps,
     profileB.username,
-    { opponentKind: "human", queueEntryId: null, playerSession: a.sessionId, opponentSession: b.sessionId, ranked: true },
+    { opponentKind: "human", queueEntryId: null, playerSession: a.sessionId, opponentSession: b.sessionId, mode: "ranked" },
     players,
   );
 }

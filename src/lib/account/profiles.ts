@@ -49,6 +49,9 @@ export class ProfileStoreError extends Error {
 /** Postgres unique_violation: the username is taken (profiles_username_key). */
 export const UNIQUE_VIOLATION = "23505";
 
+/** Escapes LIKE wildcards, so user input only ever matches itself. */
+const likeLiteral = (text: string) => text.replace(/[\\%_]/g, (c) => `\\${c}`);
+
 export async function getProfile(userId: string, db: Db): Promise<Profile | null> {
   const { data, error } = await db.from(PROFILES_TABLE).select(COLUMNS).eq("user_id", userId);
   if (error) throw new ProfileStoreError("load the profile", error);
@@ -58,9 +61,8 @@ export async function getProfile(userId: string, db: Db): Promise<Profile | null
 
 /** Whether another account already has this username, ignoring case. */
 export async function usernameTaken(username: string, db: Db): Promise<boolean> {
-  // ilike without wildcards is a case-insensitive equality; "_" is a LIKE wildcard, so escape it.
-  const pattern = username.replace(/[\\%_]/g, (c) => `\\${c}`);
-  const { data, error } = await db.from(PROFILES_TABLE).select("user_id").ilike("username", pattern).limit(1);
+  // ilike without wildcards is a case-insensitive equality.
+  const { data, error } = await db.from(PROFILES_TABLE).select("user_id").ilike("username", likeLiteral(username)).limit(1);
   if (error) throw new ProfileStoreError("check the username", error);
   return (data as unknown[]).length > 0;
 }
@@ -71,4 +73,32 @@ export async function insertProfile(userId: string, username: string, db: Db): P
   if (error?.code === UNIQUE_VIOLATION) return false;
   if (error) throw new ProfileStoreError("create the profile", error);
   return true;
+}
+
+/** The account with exactly this username, ignoring case. */
+export async function findProfileByUsername(username: string, db: Db): Promise<Profile | null> {
+  const { data, error } = await db.from(PROFILES_TABLE).select(COLUMNS).ilike("username", likeLiteral(username)).limit(1);
+  if (error) throw new ProfileStoreError("find the player", error);
+  const row = (data as ProfileRow[])[0];
+  return row ? toProfile(row) : null;
+}
+
+/** Several accounts at once (in no particular order); unknown ids are left out. */
+export async function getProfiles(userIds: string[], db: Db): Promise<Profile[]> {
+  if (userIds.length === 0) return [];
+  const { data, error } = await db.from(PROFILES_TABLE).select(COLUMNS).in("user_id", userIds);
+  if (error) throw new ProfileStoreError("load the players", error);
+  return (data as ProfileRow[]).map(toProfile);
+}
+
+/** Accounts whose username starts with `prefix` (ignoring case), alphabetically. */
+export async function searchProfiles(prefix: string, limit: number, db: Db): Promise<Profile[]> {
+  const { data, error } = await db
+    .from(PROFILES_TABLE)
+    .select(COLUMNS)
+    .ilike("username", `${likeLiteral(prefix)}%`)
+    .order("username")
+    .limit(limit);
+  if (error) throw new ProfileStoreError("search for players", error);
+  return (data as ProfileRow[]).map(toProfile);
 }

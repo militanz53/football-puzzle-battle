@@ -264,7 +264,8 @@ export function RoundPlay({
 }: {
   /** Shown wherever the opponent is named (§13.1). */
   opponentName: string;
-  ranked?: RankedView | null;
+  /** Two accounts (Ranked or friendly): usernames and ratings on the scoreboard. */
+  ranked?: Pick<RankedView, "you" | "opponent"> | null;
   /** Without its answer while the round runs (src/server/match/view.ts). */
   puzzle: Puzzle;
   round: PublicRound;

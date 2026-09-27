@@ -88,7 +88,7 @@ export function Scoreboard({
   ranked = null,
 }: {
   /** Ranked: both usernames and ratings replace "You" and the nickname. */
-  ranked?: RankedView | null;
+  ranked?: Pick<RankedView, "you" | "opponent"> | null;
   totals: Record<Side, number>;
   player?: SideState;
   bot?: SideState;

@@ -116,7 +116,7 @@ describe("settling a ranked match", () => {
     const view = await createMatch(
       deps,
       players.b.name,
-      { opponentKind: "human", queueEntryId: null, playerSession: "it-rk-a", opponentSession: "it-rk-b", ranked: true },
+      { opponentKind: "human", queueEntryId: null, playerSession: "it-rk-a", opponentSession: "it-rk-b", mode: "ranked" },
       players,
     );
     matches.push(view.id);

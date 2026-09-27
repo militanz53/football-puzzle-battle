@@ -40,7 +40,7 @@ export function checkPassword(input: unknown): Check<string> {
   return { ok: true, value: input };
 }
 
-/** Where to go after signing in: only our own ranked-related pages, never another site. */
-export function safeAccountNext(next: unknown): "/" | "/ranked" {
-  return next === "/ranked" ? "/ranked" : "/";
+/** Where to go after signing in: only our own account pages, never another site. */
+export function safeAccountNext(next: unknown): "/" | "/ranked" | "/friends" {
+  return next === "/ranked" || next === "/friends" ? next : "/";
 }

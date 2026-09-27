@@ -1,14 +1,19 @@
 // Main Menu — GDD §21 (first prototype: PLAY, PRACTICE, HOW TO PLAY) styled per §22.
-// QUICK MATCH opens the 5-round match, RANKED the ranked one (§13.5, account needed);
-// PRACTICE and HOW TO PLAY are still inert.
+// QUICK MATCH opens the 5-round match, RANKED the ranked one (§13.5), FRIENDS the
+// friends list and challenges (§13.2); both need an account. PRACTICE and HOW TO PLAY
+// are still inert.
 
 import Image from "next/image";
 import Link from "next/link";
+import { ChallengeInbox } from "@/components/friends/ChallengeInbox";
 import { AccountChip } from "@/components/menu/AccountChip";
 import { MenuLobby } from "@/components/menu/MenuLobby";
 import { SoundToggle } from "@/components/sound/SoundToggle";
 import { randomPlayerName } from "@/lib/nickname";
 import { currentAccount } from "@/lib/account/auth";
+import { incomingChallenges } from "@/lib/friends/challenges";
+import { inboxChannel, notifyInbox } from "@/lib/friends/inbox";
+import { getServerSupabase } from "@/lib/supabase/server";
 import { readIdentity } from "@/lib/session";
 import stadium from "../../public/images/stadium-bg.png";
 
@@ -71,9 +76,17 @@ function Logo() {
 export default async function MainMenu() {
   // The nickname and the account live in cookies, so the menu renders per request.
   const [identity, account] = await Promise.all([readIdentity(), currentAccount()]);
+  // Signed in: challenges from friends show up here too, live over the inbox channel.
+  const inbox = account
+    ? {
+        channel: await inboxChannel(account.userId),
+        invites: await incomingChallenges(account.userId, { db: getServerSupabase(), now: Date.now, notify: notifyInbox }),
+      }
+    : null;
   return (
     <main className="relative isolate flex flex-1 justify-center overflow-hidden px-4">
       <Backdrop />
+      {inbox && <ChallengeInbox channel={inbox.channel} initial={inbox.invites} />}
       <div className="relative flex w-full max-w-[390px] flex-col py-5">
         <div className="flex items-center justify-between gap-3">
           <AccountChip account={account} />
@@ -93,17 +106,23 @@ export default async function MainMenu() {
           >
             Quick Match
           </Link>
-          <div className="grid grid-cols-2 gap-3">
-            {/* Signed out, /ranked sends the player to the account screen first. */}
+          <div className="grid grid-cols-3 gap-2">
+            {/* Signed out, /ranked and /friends send the player to the account screen first. */}
             <Link
               href="/ranked"
-              className="grid h-14 w-full place-items-center rounded-2xl border border-accent/50 bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-accent backdrop-blur-sm transition-colors hover:border-accent hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+              className="grid h-14 w-full place-items-center rounded-2xl border border-accent/50 bg-bg-primary/60 font-display text-sm font-semibold uppercase tracking-wider text-accent backdrop-blur-sm transition-colors hover:border-accent hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
             >
               Ranked
             </Link>
+            <Link
+              href="/friends"
+              className="grid h-14 w-full place-items-center rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-sm font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              Friends
+            </Link>
             <button
               type="button"
-              className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+              className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-sm font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
             >
               Practice
             </button>
