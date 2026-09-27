@@ -16,7 +16,7 @@ import { useServerMatch } from "./useServerMatch";
 
 /**
  * §11 says the next round starts "about 2 seconds" after the result. The result
- * screen carries the answer, points and the bot's outcome, so it stays a little
+ * screen carries the answer, points and the opponent's outcome, so it stays a little
  * longer; tapping the button skips the wait.
  */
 const NEXT_ROUND_DELAY_MS = 3500;
@@ -126,6 +126,7 @@ export function MatchScreen({ initialView, names }: { initialView: MatchView; na
             submitting={submitting}
             onBuzz={buzz}
             onSubmit={submit}
+            opponentName={view.opponentName}
           />
         )}
 
@@ -137,10 +138,11 @@ export function MatchScreen({ initialView, names }: { initialView: MatchView; na
             nextLabel={nextLabel(match)}
             delayMs={NEXT_ROUND_DELAY_MS}
             onNext={next}
+            opponentName={view.opponentName}
           />
         )}
 
-        {match.status === "over" && <MatchResult match={match} onRematch={rematch} />}
+        {match.status === "over" && <MatchResult match={match} opponentName={view.opponentName} onRematch={rematch} />}
       </div>
     </main>
   );

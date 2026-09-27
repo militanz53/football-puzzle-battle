@@ -14,6 +14,11 @@ export interface MatchRecord {
   version: number;
   /** The match layer's own state; puzzles here include their answers. */
   match: MatchState;
+  /**
+   * The name the player sees for the opponent (a random nickname when the bot
+   * plays, §13.1). Whether it is a bot is stored only in the table (opponent_kind).
+   */
+  opponentName: string;
   /** The running round, or null before a round starts and after it finishes. */
   round: RoundTimeline | null;
 }
@@ -34,8 +39,8 @@ function startTimeline(puzzle: Puzzle, { now, rng }: Clock): RoundTimeline {
 }
 
 /** A new match; its first round starts when the player's screen is ready (startRound). */
-export function newMatchRecord(schedule: Puzzle[]): Omit<MatchRecord, "id"> {
-  return { version: 0, match: createMatch(schedule), round: null };
+export function newMatchRecord(schedule: Puzzle[], opponentName: string): Omit<MatchRecord, "id"> {
+  return { version: 0, match: createMatch(schedule), opponentName, round: null };
 }
 
 /** The running round replayed to `now`. */

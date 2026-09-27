@@ -18,7 +18,7 @@ function Stat({ label, value }: { label: string; value: string }) {
 }
 
 /** Match result (§12): totals, VICTORY/DEFEAT and the player's stats. */
-export function MatchResult({ match, onRematch }: { match: MatchState; onRematch: () => void }) {
+export function MatchResult({ match, opponentName, onRematch }: { match: MatchState; opponentName: string; onRematch: () => void }) {
   const t = totals(match.rounds);
   const won = match.winner === "player";
   const suddenDeathRounds = match.rounds.filter((r) => r.suddenDeath).length;
@@ -48,16 +48,16 @@ export function MatchResult({ match, onRematch }: { match: MatchState; onRematch
 
       <div className="mt-7">
         <div className="flex items-end justify-between">
-          <div>
+          <div data-side="player">
             <p className="font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">You</p>
-            <p className={`font-display text-3xl font-bold tabular-nums ${won ? "text-accent" : "text-text-secondary"}`}>
+            <p data-score className={`font-display text-3xl font-bold tabular-nums ${won ? "text-accent" : "text-text-secondary"}`}>
               {t.player}
             </p>
           </div>
           <span className="pb-2 font-display text-xs font-bold tracking-widest text-text-muted-2">VS</span>
-          <div className="text-right">
-            <p className="font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">Bot</p>
-            <p className={`font-display text-3xl font-bold tabular-nums ${won ? "text-text-secondary" : "text-accent"}`}>
+          <div data-side="opponent" className="min-w-0 text-right">
+            <p className="truncate font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">{opponentName}</p>
+            <p data-score className={`font-display text-3xl font-bold tabular-nums ${won ? "text-text-secondary" : "text-accent"}`}>
               {t.bot}
             </p>
           </div>

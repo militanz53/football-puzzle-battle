@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { expect, test, waitForClue } from "./helpers";
+import { expect, test, waitForClue, waitForOpponent } from "./helpers";
 
 // §23 sounds are synthesised with Web Audio, so there is nothing to hear in a headless
 // browser. Instead every oscillator the page creates is counted: each tone of each
@@ -26,7 +26,7 @@ test("sounds play in a match and the mute choice is remembered", async ({ page, 
 
   // Tapping PLAY unlocks audio; the round-start beeps (2 tones) follow.
   await page.getByRole("link", { name: "Play" }).click();
-  await expect(page.locator("[data-puzzle-id]")).toBeVisible();
+  await waitForOpponent(page);
   await expect.poll(() => tones(page)).toBeGreaterThanOrEqual(2);
 
   await test.step("a new clue pops", async () => {
@@ -49,6 +49,7 @@ test("sounds play in a match and the mute choice is remembered", async ({ page, 
   await test.step("the choice survives a reload (localStorage)", async () => {
     expect(await page.evaluate(() => localStorage.getItem("fpb:sound"))).toBe("off");
     await page.reload();
+    await waitForOpponent(page);
     await expect(toggle(page)).toHaveAttribute("aria-pressed", "true");
     // Buzz is a real tap, so audio would be allowed now: only the mute keeps it silent.
     await page.getByRole("button", { name: /^Buzz/ }).click();

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { answer, buzzIn, newMatch, nextMatchRound, startMatchRound, syncMatch } from "@/app/match/actions";
+import { answer, buzzIn, nextMatchRound, rematch as rematchAction, startMatchRound, syncMatch } from "@/app/match/actions";
 import { MATCH_STATE_EVENT, matchChannel } from "@/lib/matchChannel";
 import { getPublicSupabase } from "@/lib/supabase/public";
 import type { MatchView, PublicRound } from "@/server/match/view";
@@ -118,11 +118,11 @@ export function useServerMatch(initial: MatchView) {
     if (rematching.current) return; // ignore repeat taps while the new match is drawn
     rematching.current = true;
     try {
-      await call(() => newMatch(), true);
+      await call(() => rematchAction(id), true);
     } finally {
       rematching.current = false;
     }
-  }, [call]);
+  }, [call, id]);
 
   return { view, round, submitting, buzz, submit, next, rematch };
 }

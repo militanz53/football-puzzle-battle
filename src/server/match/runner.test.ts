@@ -9,6 +9,7 @@ import type { MatchView } from "./view";
 // The runner against an in-memory `matches` table (secret key). No network.
 
 const T0 = 1_750_000_000_000;
+const ORIGIN = { opponentKind: "bot" as const, queueEntryId: null, playerSession: "session-1" };
 
 function setup() {
   const table = fakeTable();
@@ -27,7 +28,7 @@ function setup() {
 describe("match runner", () => {
   it("creates a match row with readable columns and no running round", async () => {
     const { table, deps } = setup();
-    const view = await createMatch(deps);
+    const view = await createMatch(deps, "Emre_34", ORIGIN);
     expect(table.rows).toHaveLength(1);
     expect(table.rows[0]).toMatchObject({
       id: view.id,
@@ -37,13 +38,18 @@ describe("match runner", () => {
       round_started_at: null,
       player_score: 0,
       bot_score: 0,
+      opponent_name: "Emre_34",
+      opponent_kind: "bot",
+      player_session: "session-1",
     });
     expect(view.round).toBeNull();
+    expect(view.opponentName).toBe("Emre_34");
+    expect(JSON.stringify(view)).not.toMatch(/opponent_?kind|"human"|session-1/);
   });
 
   it("saves a change with a new version and broadcasts the new view", async () => {
     const { table, deps, sent } = setup();
-    const { id } = await createMatch(deps);
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
     const view = await runOnMatch(id, startRound, deps);
     expect(view.version).toBe(1);
     expect(view.round?.clockMs).toBe(0);
@@ -53,7 +59,7 @@ describe("match runner", () => {
 
   it("neither writes nor broadcasts when nothing changes", async () => {
     const { table, deps, sent, advance } = setup();
-    const { id } = await createMatch(deps);
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
     await runOnMatch(id, startRound, deps);
     advance(2_000);
     const view = await runOnMatch(id, (r) => ({ record: r, changed: false }), deps);
@@ -64,7 +70,7 @@ describe("match runner", () => {
 
   it("retries when another request wrote first, applying the rule to the fresh row", async () => {
     const { table, deps } = setup();
-    const { id } = await createMatch(deps);
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
     await runOnMatch(id, startRound, deps);
     let calls = 0;
     const view = await runOnMatch(
@@ -89,7 +95,7 @@ describe("match runner", () => {
 
   it("still answers when the Realtime broadcast fails", async () => {
     const { deps } = setup();
-    const { id } = await createMatch(deps);
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
     deps.broadcast = vi.fn(async () => {
       throw new Error("realtime down");
     });

@@ -6,10 +6,12 @@ import {
   currentPuzzle,
   expect,
   forceBotWrong,
+  scoreOf,
   test,
   TYPE_LABEL,
   waitForClue,
   waitForNextRound,
+  waitForOpponent,
   waitForRoundResult,
 } from "./helpers";
 
@@ -33,6 +35,7 @@ async function openMatchFromMenu(page: Page, shot: (name: string) => Promise<voi
   await shot("main-menu");
   await page.getByRole("link", { name: "Play" }).click();
   await expect(page).toHaveURL(/\/match$/);
+  await waitForOpponent(page); // Quick Match: searching screen, then the match (§13.1)
 }
 
 async function playRound(page: Page, round: number, strategy: Strategy, shot: (name: string) => Promise<void>) {
@@ -119,8 +122,8 @@ test.describe("MVP 0.1 match against the bot", () => {
       await expect(title).toBeVisible();
       await expect(page.getByText("Match result")).toBeVisible();
       // Sudden Death never adds points (§12.1), so the total is exactly the planned rounds.
-      await expect(scoreOf(page, "You")).toHaveText(String(expectedTotal));
-      await expect(scoreOf(page, "Bot")).toHaveText(/^\d+$/);
+      await expect(scoreOf(page, "player")).toHaveText(String(expectedTotal));
+      await expect(scoreOf(page, "opponent")).toHaveText(/^\d+$/);
       await expect(stat(page, "Correct answers")).toHaveText("2/5");
       await expect(stat(page, "Average buzz")).toHaveText(/^\d+\.\ds$/);
       await expect(stat(page, "Best round")).toHaveText("Goal Map +1000");
@@ -132,8 +135,8 @@ test.describe("MVP 0.1 match against the bot", () => {
       await page.getByRole("button", { name: "Rematch" }).click();
       await expect(page.getByText("Round 1/5 · Goal Map")).toBeVisible();
       await expect(page.locator("[data-puzzle-type]")).toHaveAttribute("data-puzzle-type", "goal_map");
-      await expect(scoreOf(page, "You")).toHaveText("0");
-      await expect(scoreOf(page, "Bot")).toHaveText("0");
+      await expect(scoreOf(page, "player")).toHaveText("0");
+      await expect(scoreOf(page, "opponent")).toHaveText("0");
       await expect(page.getByRole("button", { name: /^Buzz/ })).toBeEnabled();
       await shot("rematch-round-1");
     });
@@ -189,8 +192,8 @@ test.describe("MVP 0.1 match against the bot", () => {
       await waitForNextRound(page);
       await expect(page.getByRole("heading", { name: "Victory" })).toBeVisible();
       await expect(page.getByText("Decided in sudden death")).toBeVisible();
-      await expect(scoreOf(page, "You")).toHaveText("0");
-      await expect(scoreOf(page, "Bot")).toHaveText("0");
+      await expect(scoreOf(page, "player")).toHaveText("0");
+      await expect(scoreOf(page, "opponent")).toHaveText("0");
       await expect(stat(page, "Correct answers")).toHaveText("0/5");
       await shot("match-result");
     });
@@ -200,10 +203,6 @@ test.describe("MVP 0.1 match against the bot", () => {
 });
 
 /** The big total under "You" / "Bot" on the scoreboard or the match result. */
-function scoreOf(page: Page, who: "You" | "Bot") {
-  return page.getByText(who, { exact: true }).first().locator("xpath=following-sibling::p[1]");
-}
-
 function stat(page: Page, label: string) {
   return page.getByText(label, { exact: true }).locator("xpath=following-sibling::p[1]");
 }

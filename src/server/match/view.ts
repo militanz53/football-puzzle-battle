@@ -18,6 +18,8 @@ export interface MatchView {
   serverTime: number;
   /** The match, with puzzles still in play stripped of their answers. */
   match: MatchState;
+  /** Shown wherever the opponent is named. Never says whether it is a bot. */
+  opponentName: string;
   /** The running round, or null before it starts and once it has finished. */
   round: PublicRound | null;
   /** When the round next changes by itself (bot, time-outs); the browser asks again then. */
@@ -55,6 +57,7 @@ export function toView(record: MatchRecord, now: number): MatchView {
     id: record.id,
     version: record.version,
     serverTime: now,
+    opponentName: record.opponentName,
     match: {
       ...match,
       schedule: match.schedule.map(hideAnswer),
@@ -89,5 +92,6 @@ export function summaryColumns(record: MatchRecord, now: number) {
     player_score: score.player,
     bot_score: score.bot,
     winner: match.winner,
+    opponent_name: record.opponentName,
   };
 }

@@ -80,9 +80,9 @@ function botDetail(bot: SideState, suddenDeath: boolean): string {
   }
 }
 
-function suddenDeathVerdict(first: Side | null) {
+function suddenDeathVerdict(first: Side | null, opponentName: string) {
   if (first === "player") return { text: "You win the match!", good: true };
-  if (first === "bot") return { text: "Bot wins the match", good: false };
+  if (first === "bot") return { text: `${opponentName} wins the match`, good: false };
   return { text: "Still level · another sudden death round", good: false };
 }
 
@@ -93,8 +93,10 @@ export function RoundResult({
   nextLabel,
   delayMs,
   onNext,
+  opponentName,
 }: {
   record: RoundRecord;
+  opponentName: string;
   totals: Record<Side, number>;
   nextLabel: string;
   delayMs: number;
@@ -105,11 +107,11 @@ export function RoundResult({
   const points = player.kind === "correct" ? player.points : 0;
   const shownPoints = useCountUp(suddenDeath ? 0 : points);
   const typed = player.kind === "wrong" && !player.timedOut && player.answer ? player.answer : null;
-  const verdict = suddenDeath ? suddenDeathVerdict(record.firstCorrect) : null;
+  const verdict = suddenDeath ? suddenDeathVerdict(record.firstCorrect, opponentName) : null;
 
   return (
     <>
-      <Scoreboard totals={totals} player={player} bot={bot} suddenDeath={suddenDeath} />
+      <Scoreboard totals={totals} player={player} bot={bot} suddenDeath={suddenDeath} opponentName={opponentName} />
 
       <section className="flex flex-1 flex-col items-center text-center" aria-live="polite">
         <div
@@ -154,7 +156,7 @@ export function RoundResult({
         <div className="mt-6 w-full rounded-2xl border border-border-subtle bg-bg-surface p-4 text-left">
           <PuzzleRecap puzzle={puzzle} />
           <div className="mt-3 flex items-center justify-between border-t border-border-subtle pt-3 text-sm">
-            <span className="font-display font-semibold text-text-secondary">Bot</span>
+            <span className="truncate font-display font-semibold text-text-secondary">{opponentName}</span>
             <span className="text-text-secondary">{botDetail(bot, suddenDeath)}</span>
           </div>
         </div>

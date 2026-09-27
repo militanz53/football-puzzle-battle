@@ -6,7 +6,7 @@ import { fetchPublishedPuzzles } from "@/data/puzzles";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { broadcastMatchView } from "./broadcast";
 import { type Clock, type MatchRecord, newMatchRecord, type Outcome } from "./service";
-import { insertMatch, loadMatch, saveMatch, type Db } from "./store";
+import { insertMatch, loadMatch, type MatchOrigin, saveMatch, type Db } from "./store";
 import { toView, type MatchView } from "./view";
 
 // Runs a match rule against the stored match: load → apply (./service.ts) → save
@@ -51,11 +51,15 @@ async function publish(view: MatchView, deps: MatchDeps): Promise<void> {
   }
 }
 
-/** A new match: the server draws the five puzzles (§27). The first round starts on startRound. */
-export async function createMatch(deps: MatchDeps): Promise<MatchView> {
-  const record: MatchRecord = { id: crypto.randomUUID(), ...newMatchRecord(buildSchedule(await deps.loadPool(), deps.rng)) };
+/**
+ * A new match: the server draws the five puzzles (§27). The first round starts on
+ * startRound. `origin` is stored for statistics and never reaches the view.
+ */
+export async function createMatch(deps: MatchDeps, opponentName: string, origin: MatchOrigin): Promise<MatchView> {
+  const schedule = buildSchedule(await deps.loadPool(), deps.rng);
+  const record: MatchRecord = { id: crypto.randomUUID(), ...newMatchRecord(schedule, opponentName) };
   const now = deps.now();
-  await insertMatch(record, now, deps.db);
+  await insertMatch(record, origin, now, deps.db);
   return toView(record, now);
 }
 
@@ -79,4 +83,9 @@ export async function runOnMatch(
     }
   }
   throw new Error(`Match ${id} is changing too fast; try again.`);
+}
+
+/** The current view of a match, without changing it. */
+export async function viewMatch(id: string, deps: MatchDeps): Promise<MatchView> {
+  return runOnMatch(id, (record) => ({ record, changed: false }), deps);
 }

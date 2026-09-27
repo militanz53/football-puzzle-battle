@@ -89,6 +89,21 @@ export const TYPE_LABEL: Record<PuzzleType, string> = {
 export const nextButton = (page: Page) =>
   page.getByRole("button", { name: /^(Next round|See match result|Sudden death)$/ });
 
+/** Quick Match searches 15-20 s before the bot takes the match (src/server/match/queue.ts). */
+export const MATCHMAKING_TIMEOUT = 35_000;
+
+/** After PLAY: the searching screen, then "Opponent found", then round 1. Returns the opponent's name. */
+export async function waitForOpponent(page: Page): Promise<string> {
+  await expect(page.getByRole("heading", { name: "Finding an opponent…" })).toBeVisible();
+  await expect(page.getByText("Opponent found")).toBeVisible({ timeout: MATCHMAKING_TIMEOUT });
+  const name = (await page.getByRole("heading", { level: 1 }).textContent())!.trim();
+  await expect(page.locator("[data-puzzle-id]")).toBeVisible({ timeout: 10_000 });
+  return name;
+}
+
+/** The big score for one side, on the scoreboard or the match result. */
+export const scoreOf = (page: Page, side: "player" | "opponent") => page.locator(`[data-side="${side}"] [data-score]`).first();
+
 /** The puzzle on screen, from the round card's data attributes. */
 export async function currentPuzzle(page: Page): Promise<Puzzle> {
   const card = page.locator("[data-puzzle-id]");

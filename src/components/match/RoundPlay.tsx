@@ -15,14 +15,14 @@ import { Scoreboard } from "./Scoreboard";
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /** Sudden Death decides the match without points (§12.1), so it hides the per-reveal values. */
-function RevealTimer({ state, suddenDeath }: { state: PublicRound; suddenDeath: boolean }) {
+function RevealTimer({ state, suddenDeath, opponentName }: { state: PublicRound; suddenDeath: boolean; opponentName: string }) {
   const stage = displayStage(state);
   const isLast = stage === REVEAL_COUNT;
   const nextAt = isLast ? state.windowMs : stage * state.intervalMs;
   const secondsLeft = Math.ceil((nextAt - state.clockMs) / 1000);
 
   let label = `${isLast ? "Time left" : "Next clue"}: ${pad2(secondsLeft)}`;
-  if (state.answering === "bot") label = "Paused · bot is answering";
+  if (state.answering === "bot") label = `Paused · ${opponentName} is answering`;
   if (state.answering === "player") label = "Paused · your answer";
 
   return (
@@ -259,7 +259,10 @@ export function RoundPlay({
   submitting,
   onBuzz,
   onSubmit,
+  opponentName,
 }: {
+  /** Shown wherever the opponent is named (§13.1). */
+  opponentName: string;
   /** Without its answer while the round runs (src/server/match/view.ts). */
   puzzle: Puzzle;
   round: PublicRound;
@@ -286,7 +289,7 @@ export function RoundPlay({
 
   return (
     <>
-      <Scoreboard totals={totals} player={round.player} bot={round.bot} suddenDeath={suddenDeath} />
+      <Scoreboard totals={totals} player={round.player} bot={round.bot} suddenDeath={suddenDeath} opponentName={opponentName} />
 
       {/* data-puzzle-* let the E2E tests look up the puzzle; the answer is never in the DOM. */}
       <section
@@ -302,7 +305,7 @@ export function RoundPlay({
       </section>
 
       <div className="mt-4">
-        <RevealTimer state={round} suddenDeath={suddenDeath} />
+        <RevealTimer state={round} suddenDeath={suddenDeath} opponentName={opponentName} />
       </div>
 
       <div className="mt-auto flex justify-center pt-5">

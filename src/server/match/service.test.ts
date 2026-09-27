@@ -13,7 +13,7 @@ const T0 = 1_750_000_000_000;
 const loadPool = async () => POOL;
 
 function freshMatch(seed = 1): MatchRecord {
-  return { id: "m1", ...newMatchRecord(buildSchedule(POOL, seeded(seed))) };
+  return { id: "m1", ...newMatchRecord(buildSchedule(POOL, seeded(seed)), "Emre_34") };
 }
 const clock = (ms: number, seed = 7): Clock => ({ now: T0 + ms, rng: seeded(seed) });
 /** A bot that never buzzes, so a test controls the whole round. */

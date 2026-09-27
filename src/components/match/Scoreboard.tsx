@@ -23,6 +23,7 @@ function Player({
   side,
   align,
   showPoints,
+  testSide,
 }: {
   name: string;
   score: number;
@@ -31,6 +32,8 @@ function Player({
   side?: SideState;
   align: "left" | "right";
   showPoints: boolean;
+  /** For tests: "player" or "opponent". */
+  testSide: "player" | "opponent";
 }) {
   const status = side ? statusText(side, showPoints) : null;
   const right = align === "right";
@@ -38,7 +41,7 @@ function Player({
   const scoreColour = leading ? "text-accent" : level ? "text-text-primary" : "text-text-secondary";
 
   return (
-    <div className={`flex min-w-0 items-center gap-3 ${right ? "flex-row-reverse text-right" : ""}`}>
+    <div data-side={testSide} className={`flex min-w-0 items-center gap-3 ${right ? "flex-row-reverse text-right" : ""}`}>
       <span
         className={`grid h-10 w-10 shrink-0 place-items-center rounded-full border font-display text-sm font-bold ${
           status?.active
@@ -46,11 +49,11 @@ function Player({
             : "border-border-subtle bg-bg-surface text-text-secondary"
         }`}
       >
-        {name[0]}
+        {name[0]?.toLocaleUpperCase("tr")}
       </span>
       <div className="min-w-0">
-        <p className="font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">{name}</p>
-        <p key={score} className={`font-display text-2xl font-bold leading-tight tabular-nums motion-safe:animate-pop ${scoreColour}`}>
+        <p className="truncate font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">{name}</p>
+        <p data-score key={score} className={`font-display text-2xl font-bold leading-tight tabular-nums motion-safe:animate-pop ${scoreColour}`}>
           {score}
         </p>
         {status && (
@@ -67,25 +70,27 @@ function Player({
   );
 }
 
-/** Top of the match screen (§10): Player — score vs score — Bot. */
+/** Top of the match screen (§10): You — score vs score — opponent (by name, §13.1). */
 export function Scoreboard({
   totals,
   player,
   bot,
   suddenDeath = false,
+  opponentName,
 }: {
   totals: Record<Side, number>;
   player?: SideState;
   bot?: SideState;
   /** Sudden Death decides the winner without adding points. */
   suddenDeath?: boolean;
+  opponentName: string;
 }) {
   const level = totals.player === totals.bot;
   return (
     <header className="flex items-center justify-between gap-2">
-      <Player name="You" score={totals.player} leading={totals.player > totals.bot} level={level} side={player} align="left" showPoints={!suddenDeath} />
+      <Player name="You" score={totals.player} leading={totals.player > totals.bot} level={level} side={player} align="left" showPoints={!suddenDeath} testSide="player" />
       <span className="font-display text-xs font-bold tracking-widest text-text-muted-2">VS</span>
-      <Player name="Bot" score={totals.bot} leading={totals.bot > totals.player} level={level} side={bot} align="right" showPoints={!suddenDeath} />
+      <Player name={opponentName} score={totals.bot} leading={totals.bot > totals.player} level={level} side={bot} align="right" showPoints={!suddenDeath} testSide="opponent" />
     </header>
   );
 }
