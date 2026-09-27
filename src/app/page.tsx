@@ -9,23 +9,31 @@ import { randomPlayerName } from "@/lib/nickname";
 import { readIdentity } from "@/lib/session";
 import stadium from "../../public/images/stadium-bg.png";
 
-/** The night stadium behind the menu, pushed back under navy so it never competes with the text. */
+/**
+ * The night stadium behind the menu, under navy so it never competes with the text.
+ * The photo is lifted so its centre circle (57% down the image) sits behind the
+ * wordmark, about a third of the way down the screen.
+ */
 function Backdrop() {
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
-      <Image
-        src={stadium}
-        alt=""
-        fill
-        preload
-        sizes="100vw"
-        quality={70}
-        placeholder="blur"
-        className="object-cover object-top"
-      />
-      {/* Darkest behind the cards and buttons, a little of the floodlights left at the top. */}
-      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(11,18,32,0.4)_0%,rgba(11,18,32,0.35)_25%,rgba(11,18,32,0.82)_52%,rgba(11,18,32,0.96)_75%,#0b1220_100%)]" />
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(11,18,32,0.75)_100%)]" />
+    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10 overflow-hidden">
+      {/* Phones: the frame starts 60% above the screen and the photo fills its height.
+          Wide screens: the photo is cropped by width, so it is aimed with object-position. */}
+      <div className="absolute inset-x-0 bottom-0 top-[-60%] md:top-0">
+        <Image
+          src={stadium}
+          alt=""
+          fill
+          preload
+          sizes="100vw"
+          placeholder="blur"
+          className="object-cover object-center md:object-[50%_68%]"
+        />
+      </div>
+      {/* Light over the pitch behind the wordmark; deeper behind the cards, where the
+          pitch lines should only just show through. */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(11,18,32,0.5)_0%,rgba(11,18,32,0.25)_22%,rgba(11,18,32,0.35)_45%,rgba(11,18,32,0.62)_60%,rgba(11,18,32,0.72)_80%,rgba(11,18,32,0.88)_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_40%,rgba(11,18,32,0.7)_100%)]" />
     </div>
   );
 }
@@ -50,7 +58,7 @@ function Logo() {
         <span className="block text-text-primary">Puzzle</span>
         <span className="block text-accent drop-shadow-[0_0_18px_rgba(62,213,152,0.55)]">Battle</span>
       </h1>
-      <p className="relative max-w-[16rem] text-center text-[15px] leading-snug text-text-secondary">
+      <p className="relative max-w-[16rem] text-center text-[15px] leading-snug text-text-secondary [text-shadow:0_1px_2px_rgba(11,18,32,0.95),0_0_14px_rgba(11,18,32,0.95)]">
         Know it before your opponent does.
       </p>
     </div>
