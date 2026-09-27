@@ -41,6 +41,6 @@ export function checkPassword(input: unknown): Check<string> {
 }
 
 /** Where to go after signing in: only our own account pages, never another site. */
-export function safeAccountNext(next: unknown): "/" | "/ranked" | "/friends" {
-  return next === "/ranked" || next === "/friends" ? next : "/";
+export function safeAccountNext(next: unknown): "/" | "/ranked" | "/friends" | "/leaderboard" {
+  return next === "/ranked" || next === "/friends" || next === "/leaderboard" ? next : "/";
 }

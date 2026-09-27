@@ -3,7 +3,7 @@ import { seeded } from "@/game/__fixtures__/seeded";
 import { fakeSupabase, fakeTable } from "@/test/fakeSupabase";
 import { loadSnapshot } from "@/test/snapshot";
 import { checkIn, createMatch, MatchAccessError, type MatchDeps, MatchNotFoundError, runOnMatch } from "./runner";
-import { buzz, LEAVE_AFTER_MS, requestRematch, START_GRACE_MS, startRound } from "./service";
+import { abandonSolo, buzz, LEAVE_AFTER_MS, requestRematch, START_GRACE_MS, startRound } from "./service";
 import { findActiveRealMatch } from "./store";
 import { friendlyMatchMaker } from "./friendly";
 import type { RankedResult } from "./ranked";
@@ -305,5 +305,44 @@ describe("a friendly match between friends (§13.2)", () => {
     const { deps } = setup();
     const id = await friendlyMatchMaker(deps)({ session: "sa", profile: ALICE }, { session: "sb", profile: BOB });
     await expect(runOnMatch(id, startRound, deps, "someone-else")).rejects.toBeInstanceOf(MatchAccessError);
+  });
+});
+
+describe("a ranked match the bot took", () => {
+  const SOLO = { userId: "user-a", username: "Kadir", rating: 1300, opponentRating: 1262 };
+  const ORIGIN_RANKED_BOT = { opponentKind: "bot" as const, queueEntryId: "q-1", playerSession: "sa", mode: "ranked" as const };
+
+  it("is stored as a ranked bot match, and shows the bot like any ranked player", async () => {
+    const { deps, table } = setup();
+    const view = await createMatch(deps, "Oğuz1989", ORIGIN_RANKED_BOT, null, SOLO);
+    expect(table.rows[0]).toMatchObject({ mode: "ranked", opponent_kind: "bot", ranked_solo: SOLO });
+    expect(view.ranked).toEqual({
+      you: { username: "Kadir", rating: 1300, tier: "Pro" },
+      opponent: { username: "Oğuz1989", rating: 1262, tier: "Pro" },
+      change: null,
+    });
+    expect(view.rematch).toBe("queue");
+    // Nothing in what the browser gets says who really played.
+    expect(JSON.stringify(view)).not.toMatch(/opponent_?kind|ranked_?solo|user-a|"human"/);
+  });
+
+  it("updates only the player, by Elo against the ghost rating, when it ends", async () => {
+    const { deps } = setup();
+    const { id } = await createMatch(deps, "Oğuz1989", ORIGIN_RANKED_BOT, null, SOLO);
+    await runOnMatch(id, startRound, deps, "sa");
+    const over = await runOnMatch(id, abandonSolo, deps, "sa"); // the quickest way to the end: a loss
+    // 1300 vs 1262, a loss: round(32 × 0.5545) = 18.
+    expect(deps.settleRanked).toHaveBeenCalledWith(id, { a: { before: 1300, after: 1282, delta: -18 }, b: { before: 1262, after: 1280, delta: 18 } });
+    expect(over.ranked?.change).toEqual({ before: 1300, after: 1282, delta: -18, tierBefore: "Pro", tierAfter: "Pro" });
+    expect(over.endedBecause).toBe("you-left");
+  });
+
+  it("leaves Quick Match bot matches alone", async () => {
+    const { deps } = setup();
+    const { id } = await createMatch(deps, "Emre_34", ORIGIN);
+    const view = await runOnMatch(id, abandonSolo, deps);
+    expect(view.match.status).toBe("playing");
+    expect(view.ranked).toBeNull();
+    expect(deps.settleRanked).not.toHaveBeenCalled();
   });
 });

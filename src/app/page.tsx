@@ -127,12 +127,20 @@ export default async function MainMenu() {
               Practice
             </button>
           </div>
-          <button
-            type="button"
-            className="mx-auto mt-1 px-3 py-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary underline decoration-text-muted-2 underline-offset-4 transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
-          >
-            How to Play
-          </button>
+          <div className="mt-1 flex justify-center gap-2">
+            <Link
+              href="/leaderboard"
+              className="px-3 py-2 font-display text-xs font-semibold uppercase tracking-widest text-accent underline decoration-accent/40 underline-offset-4 transition-colors hover:decoration-accent focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              Leaderboard
+            </Link>
+            <button
+              type="button"
+              className="px-3 py-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary underline decoration-text-muted-2 underline-offset-4 transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              How to Play
+            </button>
+          </div>
         </nav>
       </div>
     </main>

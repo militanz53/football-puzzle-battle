@@ -28,6 +28,7 @@ describe("account rules", () => {
   it("only sends a signed-in player back to the menu or Ranked", () => {
     expect(safeAccountNext("/ranked")).toBe("/ranked");
     expect(safeAccountNext("/friends")).toBe("/friends");
+    expect(safeAccountNext("/leaderboard")).toBe("/leaderboard");
     for (const next of ["/", "//evil.example", "https://evil.example", "/admin", null]) expect(safeAccountNext(next)).toBe("/");
   });
 });

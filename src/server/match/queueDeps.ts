@@ -4,6 +4,7 @@ import { getServerSupabase } from "@/lib/supabase/server";
 import type { QueueDeps, QueuedPlayer } from "./queue";
 import { supabaseQueueStore } from "./queueStore";
 import { createMatch, defaultDeps, type MatchDeps, viewMatch } from "./runner";
+import { ghostRating } from "./ranked";
 import type { Players } from "./service";
 
 // What the queue (./queue.ts) needs, wired to Supabase, for the browser whose
@@ -48,6 +49,18 @@ export function queueDeps(session: string): QueueDeps {
             { opponentKind: "human", queueEntryId: null, playerSession: a.sessionId, opponentSession: b.sessionId },
             { a: { session: a.sessionId, name: a.name }, b: { session: b.sessionId, name: b.name }, since: deps.now() },
           ),
+    // Ranked, nobody else searching: the bot, rated near the player (§14).
+    createRankedBotMatch: async (opponentName, entry) => {
+      const profile = entry.userId ? await getProfile(entry.userId, deps.db) : null;
+      if (!profile) throw new Error("A ranked player has no profile");
+      return createMatch(
+        deps,
+        opponentName,
+        { opponentKind: "bot", queueEntryId: entry.id, playerSession: session, mode: "ranked" },
+        null,
+        { userId: profile.userId, username: profile.username, rating: profile.rating, opponentRating: ghostRating(profile.rating, deps.rng) },
+      );
+    },
     viewMatch: (matchId) => viewMatch(matchId, deps, session),
   };
 }

@@ -6,8 +6,14 @@ import { currentAccount } from "@/lib/account/auth";
 import { joinQueue, joinRankedQueue, leaveQueue, pollQueue, type QueuePoll } from "@/server/match/queue";
 import { queueDeps } from "@/server/match/queueDeps";
 import { checkIn, createMatch, defaultDeps, runOnMatch, viewMatch } from "@/server/match/runner";
-import { buzz, catchUp, linkRematch, nextRound, requestRematch, sideOf, startRound, submitAnswer } from "@/server/match/service";
-import { findActiveRealMatch, loadMatchOrigin, loadMatchWithPresence } from "@/server/match/store";
+import { abandonSolo, buzz, catchUp, linkRematch, nextRound, requestRematch, sideOf, startRound, submitAnswer } from "@/server/match/service";
+import {
+  findActiveRankedBotMatch,
+  findActiveRealMatch,
+  findUnfinishedRankedBotMatches,
+  loadMatchOrigin,
+  loadMatchWithPresence,
+} from "@/server/match/store";
 import type { MatchView } from "@/server/match/view";
 
 // The match's only entry points (GDD §27: the server owns puzzle selection, round
@@ -53,12 +59,18 @@ export async function findOpponent(): Promise<{ entryId: string }> {
 
 /**
  * RANKED (§13.5): joins the ranked lane as the signed-in account. Polling and leaving
- * are the same calls as Quick Match; a ranked search ends in "no-opponent", never the bot.
+ * are the same calls as Quick Match; nobody found in time, the bot takes the match.
  */
 export async function findRankedOpponent(): Promise<{ entryId: string } | { signedOut: true }> {
   const account = await currentAccount();
   if (!account) return { signedOut: true };
   const session = await playerSession();
+  // A new search means walking away from any ranked match against the bot still
+  // unfinished: it counts as a loss (and moves the rating) before the next one starts.
+  const deps = defaultDeps();
+  for (const id of await findUnfinishedRankedBotMatches(account.userId, deps.db)) {
+    await runOnMatch(id, (record) => abandonSolo(record), deps, session);
+  }
   const entry = await joinRankedQueue(session, { userId: account.userId, username: account.username }, queueDeps(session));
   return { entryId: entry.id };
 }
@@ -137,7 +149,8 @@ export async function openMatch(id: string): Promise<MatchView> {
 export async function resumeMatch(): Promise<MatchView | null> {
   const session = await playerSession();
   const deps = defaultDeps();
-  const id = await findActiveRealMatch(session, deps.now(), deps.db);
+  // A ranked match against the bot is resumed too: reloading is not leaving.
+  const id = (await findActiveRealMatch(session, deps.now(), deps.db)) ?? (await findActiveRankedBotMatch(session, deps.now(), deps.db));
   return id ? viewMatch(id, deps, session) : null;
 }
 

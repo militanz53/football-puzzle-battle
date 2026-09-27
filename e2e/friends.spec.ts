@@ -10,7 +10,10 @@ const made: string[] = [];
 test.afterAll(async () => {
   for (const username of made) {
     const { data } = await db.from("profiles").select("user_id").ilike("username", username);
-    for (const row of data ?? []) await db.auth.admin.deleteUser(row.user_id);
+    for (const row of data ?? []) {
+      const { error } = await db.auth.admin.deleteUser(row.user_id);
+      if (error) throw new Error(`Could not delete test account: ${error.message}`);
+    }
   }
 });
 

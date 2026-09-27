@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchState } from "@/game/match";
 import type { RoundTimeline } from "@/game/timeline";
 import type { RankedResult } from "./ranked";
-import type { MatchMode, MatchRecord, Players, Seat } from "./service";
+import type { MatchMode, MatchRecord, Players, RankedSolo, Seat } from "./service";
 import { summaryColumns } from "./view";
 
 // The `matches` table (supabase/migrations/…_create_matches.sql). Server only, with
@@ -25,6 +25,7 @@ interface MatchRow {
   ended: MatchRecord["ended"];
   rematch: MatchRecord["rematch"];
   ranked_result: MatchRecord["rankedResult"];
+  ranked_solo: RankedSolo | null;
   seat_a_seen_at: string | null;
   seat_b_seen_at: string | null;
 }
@@ -64,6 +65,8 @@ export async function insertMatch(record: MatchRecord, origin: MatchOrigin, now:
     player_session: origin.playerSession,
     opponent_session: origin.opponentSession ?? null,
     ...(origin.mode && origin.mode !== "quick" ? { mode: origin.mode } : {}),
+    // Set once, never changed: only on a ranked match the bot took.
+    ...(record.rankedSolo ? { ranked_solo: record.rankedSolo } : {}),
   });
   if (error) throw new MatchStoreError("create the match", error);
 }
@@ -80,7 +83,7 @@ export async function loadMatchWithPresence(
 ): Promise<{ record: MatchRecord; seen: Record<Seat, number | null> } | null> {
   const { data, error } = await db
     .from(MATCHES_TABLE)
-    .select("id, mode, version, state, round, opponent_name, players, ended, rematch, ranked_result, seat_a_seen_at, seat_b_seen_at")
+    .select("id, mode, version, state, round, opponent_name, players, ended, rematch, ranked_result, ranked_solo, seat_a_seen_at, seat_b_seen_at")
     .eq("id", id);
   if (error) throw new MatchStoreError("load the match", error);
   const row = (data as MatchRow[])[0];
@@ -98,6 +101,7 @@ export async function loadMatchWithPresence(
       ended: row.ended,
       rematch: row.rematch,
       rankedResult: row.ranked_result,
+      rankedSolo: row.ranked_solo,
     },
     seen: { a: time(row.seat_a_seen_at), b: time(row.seat_b_seen_at) },
   };
@@ -147,6 +151,38 @@ export async function settleRankedMatch(id: string, result: RankedResult, db: Pi
   const { data, error } = await db.rpc("settle_ranked_match", { p_match: id, p_result: result });
   if (error) throw new MatchStoreError("update the ratings", error);
   return (data as RankedResult | null) ?? null;
+}
+
+/**
+ * Ranked matches against the bot that this account left unfinished (it can only play
+ * one match at a time, so starting a new ranked search means walking away from them).
+ */
+export async function findUnfinishedRankedBotMatches(userId: string, db: Db): Promise<string[]> {
+  const { data, error } = await db
+    .from(MATCHES_TABLE)
+    .select("id")
+    .eq("mode", "ranked")
+    .eq("opponent_kind", "bot")
+    .neq("status", "over")
+    .eq("ranked_solo->>userId", userId);
+  if (error) throw new MatchStoreError("look for unfinished ranked matches", error);
+  return (data as { id: string }[]).map((r) => r.id);
+}
+
+/** This browser's unfinished ranked match against the bot, for a reload (it is resumed, not lost). */
+export async function findActiveRankedBotMatch(session: string, now: number, db: Db): Promise<string | null> {
+  const { data, error } = await db
+    .from(MATCHES_TABLE)
+    .select("id")
+    .eq("mode", "ranked")
+    .eq("opponent_kind", "bot")
+    .neq("status", "over")
+    .eq("player_session", session)
+    .gte("created_at", new Date(now - RESUME_WITHIN_MS).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1);
+  if (error) throw new MatchStoreError("look for a match to resume", error);
+  return (data as { id: string }[])[0]?.id ?? null;
 }
 
 /** Real-player matches older than this are not resumed (a reloaded page starts a new search). */

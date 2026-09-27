@@ -89,11 +89,14 @@ function accountsView(record: MatchRecord, seat: Seat): Pick<RankedView, "you" |
 }
 
 function rankedView(record: MatchRecord, seat: Seat): RankedView | null {
+  if (!isRanked(record)) return null;
+  const solo = record.rankedSolo;
   const players = record.players;
-  if (!players || !isRanked(record)) return null;
+  // Against the bot, seat b is the bot: its nickname and ghost rating, shown like anyone's.
   const side = (s: Seat): RankedPlayer => {
-    const rating = players[s].account!.rating;
-    return { username: players[s].name, rating, tier: tierOf(rating) };
+    const username = solo ? (s === "a" ? solo.username : record.opponentName) : players![s].name;
+    const rating = solo ? (s === "a" ? solo.rating : solo.opponentRating) : players![s].account!.rating;
+    return { username, rating, tier: tierOf(rating) };
   };
   const mine = record.rankedResult?.[seat];
   return {

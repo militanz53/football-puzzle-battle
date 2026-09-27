@@ -36,6 +36,20 @@ export interface MatchRecord {
   rematch?: RematchOffers | null;
   /** A ranked match once it is over and applied to both profiles (§14). */
   rankedResult?: RankedResult | null;
+  /**
+   * A ranked match the bot took (nobody else was searching): the one account in it,
+   * and the ghost rating shown for the bot. Only this account's rating moves.
+   */
+  rankedSolo?: RankedSolo | null;
+}
+
+export interface RankedSolo {
+  userId: string;
+  username: string;
+  /** The player's rating when the match was made (the Elo base). */
+  rating: number;
+  /** The bot's made-up rating, near the player's (./ranked.ts ghostRating). */
+  opponentRating: number;
 }
 
 export interface RematchOffers {
@@ -190,6 +204,20 @@ export function forfeitIfGone(record: MatchRecord, now: number, seat: Seat, seen
     match: { ...record.match, status: "over", winner: sideOf(seat) },
     round: null,
     ended: { reason: "left", seat: gone },
+  });
+}
+
+/**
+ * A ranked match against the bot that the player walked away from: it ends as a loss,
+ * so leaving a losing match never saves a rating (the bot is never "left" by anyone).
+ */
+export function abandonSolo(record: MatchRecord): Outcome {
+  if (!record.rankedSolo || record.match.status === "over") return same(record);
+  return changed({
+    ...record,
+    match: { ...record.match, status: "over", winner: "bot" },
+    round: null,
+    ended: { reason: "left", seat: "a" },
   });
 }
 

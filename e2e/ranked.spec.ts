@@ -10,7 +10,10 @@ const made: string[] = [];
 test.afterAll(async () => {
   for (const email of made) {
     const { data } = await db.from("profiles").select("user_id").ilike("username", email.split("@")[0].slice(3));
-    for (const row of data ?? []) await db.auth.admin.deleteUser(row.user_id);
+    for (const row of data ?? []) {
+      const { error } = await db.auth.admin.deleteUser(row.user_id);
+      if (error) throw new Error(`Could not delete test account: ${error.message}`);
+    }
   }
 });
 
@@ -116,35 +119,74 @@ test("sign up from RANKED, see the account on the menu, sign out and back in", a
   });
 });
 
-test("Ranked alone: no bot, 'No opponents found', while Quick Match still gets its opponent", async ({ browser }) => {
+test("Ranked alone: after 9-12 s the bot plays, rated near you, and nothing ever says bot", async ({ browser }) => {
   test.setTimeout(2 * 60_000);
-  const ranked = await signedInPlayer(browser);
+  const ranked = await signedInPlayer(browser, 1300);
   const quickContext = await browser.newContext();
   const quick = await quickContext.newPage();
+  const visibleText = () => ranked.page.locator("body").innerText();
 
-  // Both search at the same moment, in different lanes.
+  // Both search at the same moment, in different lanes; each gets its own lane's bot.
   await Promise.all([ranked.page.goto("/ranked"), quick.goto("/match")]);
+  // "Opponent found" shows for 1.4 s: read it while it is up.
+  const foundRanked = async () => {
+    await expect(ranked.page.getByText("Opponent found")).toBeVisible({ timeout: MATCHMAKING_TIMEOUT });
+    const name = (await ranked.page.getByRole("heading", { level: 1 }).textContent())!.trim();
+    const line = await ranked.page.getByText(/^(Rookie|Semi-Pro|Pro|Elite|World Class|Legend|GOAT) · \d+$/).textContent({ timeout: 1_000 });
+    const text = await visibleText();
+    await ranked.page.screenshot({ path: "e2e/artifacts/screenshots/ranked-bot-found.png" });
+    return { name, line: line!, text };
+  };
+  const [{ name, line, text }, quickOpponent] = await Promise.all([foundRanked(), waitForOpponent(quick)]);
 
-  const [, opponent] = await Promise.all([
-    expect(ranked.page.getByRole("heading", { name: "No opponents found" })).toBeVisible({ timeout: MATCHMAKING_TIMEOUT }),
-    waitForOpponent(quick),
-  ]);
-  await ranked.page.screenshot({ path: "e2e/artifacts/screenshots/ranked-no-opponent.png" });
-  const quickMatch = await matchIdOnScreen(quick);
-  const { data } = await db.from("matches").select("opponent_kind, mode").eq("id", quickMatch).single();
-  baseExpect(data).toEqual({ opponent_kind: "bot", mode: "quick" }); // Quick Match as before
-  baseExpect(opponent).not.toBe(ranked.username);
+  let id = "";
+  await test.step("the opponent looks like any ranked player: a name and a rating within ±50 of mine", async () => {
+    expect(name).toMatch(/^[\p{L}\p{N}_]{3,16}$/u);
+    baseExpect(name).not.toBe(quickOpponent);
+    const ghost = Number(line.split("·")[1]);
+    baseExpect(ghost).toBeGreaterThanOrEqual(1250);
+    baseExpect(ghost).toBeLessThanOrEqual(1350);
+    baseExpect(text).not.toMatch(/\bbot\b/i);
 
-  // The ranked entry timed out with no match: nobody played the bot in Ranked.
-  const { data: profile } = await db.from("profiles").select("user_id").ilike("username", ranked.username).single();
-  const { data: rows } = await db.from("match_queue").select("status, match_id, mode").eq("user_id", profile!.user_id);
-  baseExpect(rows).toEqual([{ status: "timed_out", match_id: null, mode: "ranked" }]);
+    await expect(ranked.page.locator("[data-puzzle-id]")).toBeVisible({ timeout: 10_000 });
+    await expect(ranked.page.locator('[data-side="opponent"]')).toContainText(`${name} · ${ghost}`);
+    await expect(ranked.page.locator('[data-side="player"]')).toContainText(`${ranked.username} · 1300`);
+    baseExpect(await visibleText()).not.toMatch(/\bbot\b/i);
+    id = await matchIdOnScreen(ranked.page);
+  });
 
-  await ranked.page.getByRole("button", { name: "Try again" }).click();
-  await expect(ranked.page.getByRole("heading", { name: "Finding an opponent…" })).toBeVisible();
-  // Leave the queue properly, so the next test's players cannot be paired with this entry.
-  await ranked.page.getByRole("link", { name: "Cancel" }).click();
-  await expect(ranked.page).toHaveURL("/");
+  await test.step("behind the scenes: a ranked match against the bot, and Quick Match unchanged", async () => {
+    const { data } = await db.from("matches").select("mode, opponent_kind, ranked_solo").eq("id", id).single();
+    baseExpect(data).toMatchObject({ mode: "ranked", opponent_kind: "bot", ranked_solo: { username: ranked.username, rating: 1300 } });
+    const { data: quickRow } = await db.from("matches").select("mode, opponent_kind").eq("id", await matchIdOnScreen(quick)).single();
+    baseExpect(quickRow).toEqual({ mode: "quick", opponent_kind: "bot" });
+  });
+
+  await test.step("a reload is not leaving: the same match comes back", async () => {
+    await ranked.page.reload();
+    await expect.poll(() => matchIdOnScreen(ranked.page).catch(() => ""), { timeout: 15_000 }).toBe(id);
+  });
+
+  await test.step("walking away and searching again counts the old match as a loss, for me only", async () => {
+    // Past the resume window, the next RANKED is a new search: the old match is lost first.
+    await db.from("matches").update({ created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString() }).eq("id", id);
+    await ranked.page.goto("/");
+    await ranked.page.getByRole("link", { name: "Ranked" }).click();
+    await expect(ranked.page.getByRole("heading", { name: "Finding an opponent…" })).toBeVisible();
+    // The screen shows the search at once; the server closes the old match as it joins the queue.
+    const settled = async () => (await db.from("matches").select("status, winner, ranked_result, ranked_solo").eq("id", id).single()).data;
+    await expect.poll(async () => (await settled())?.ranked_result !== null, { timeout: 10_000 }).toBe(true);
+    const data = await settled();
+    baseExpect(data).toMatchObject({ status: "over", winner: "bot" });
+    const delta = data!.ranked_result.a.delta as number;
+    const ghost = data!.ranked_solo.opponentRating as number;
+    // Elo, one-sided: the loss against the ghost rating, and the only profile touched is mine.
+    baseExpect(delta).toBe(-Math.round(32 * (1 / (1 + 10 ** ((ghost - 1300) / 400)))));
+    const { data: me } = await db.from("profiles").select("rating, matches_played, matches_lost").ilike("username", ranked.username).single();
+    baseExpect(me).toEqual({ rating: 1300 + delta, matches_played: 1, matches_lost: 1 });
+    await ranked.page.getByRole("link", { name: "Cancel" }).click();
+  });
+
   await Promise.all([ranked.context.close(), quickContext.close()]);
 });
 

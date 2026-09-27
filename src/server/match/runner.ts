@@ -6,7 +6,7 @@ import { fetchPublishedPuzzles } from "@/data/puzzles";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { broadcastMatchView } from "./broadcast";
 import { needsSettling, rankedResult, type RankedResult } from "./ranked";
-import { type Clock, forfeitIfGone, type MatchRecord, newMatchRecord, type Outcome, type Players, type Seat } from "./service";
+import { type Clock, forfeitIfGone, type MatchRecord, newMatchRecord, type Outcome, type Players, type RankedSolo, type Seat } from "./service";
 import { insertMatch, loadMatchWithPresence, type MatchOrigin, saveMatch, settleRankedMatch, type Db, touchSeat } from "./store";
 import { toView, type MatchView } from "./view";
 
@@ -106,9 +106,15 @@ export async function createMatch(
   opponentName: string,
   origin: MatchOrigin,
   players: Players | null = null,
+  rankedSolo: RankedSolo | null = null,
 ): Promise<MatchView> {
   const schedule = buildSchedule(await deps.loadPool(), deps.rng);
-  const record: MatchRecord = { id: crypto.randomUUID(), mode: origin.mode ?? "quick", ...newMatchRecord(schedule, opponentName, players) };
+  const record: MatchRecord = {
+    id: crypto.randomUUID(),
+    mode: origin.mode ?? "quick",
+    ...newMatchRecord(schedule, opponentName, players),
+    rankedSolo,
+  };
   const now = deps.now();
   await insertMatch(record, origin, now, deps.db);
   return toView(record, now);

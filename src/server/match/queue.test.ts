@@ -8,6 +8,8 @@ import {
   leaveQueue,
   pollQueue,
   QueueAccessError,
+  RANKED_SEARCH_MAX_MS,
+  RANKED_SEARCH_MIN_MS,
   type QueueDeps,
   type QueueEntry,
   type QueueStore,
@@ -85,6 +87,7 @@ function setup() {
   const { store, rows } = memoryStore(clock);
   const created: { opponentName: string; queueEntryId: string }[] = [];
   const realMatches: { a: string; b: string; names: [string, string]; mode: string; users: [string | null, string | null] }[] = [];
+  const rankedBots: { opponentName: string; entryId: string; userId: string | null }[] = [];
   const deps: QueueDeps = {
     store,
     now: () => clock.now,
@@ -97,9 +100,13 @@ function setup() {
       realMatches.push({ a: a.sessionId, b: b.sessionId, names: [a.name, b.name], mode, users: [a.userId, b.userId] });
       return { id: `real-${realMatches.length}`, opponentName: b.name } as MatchView;
     }),
+    createRankedBotMatch: vi.fn(async (opponentName, entry) => {
+      rankedBots.push({ opponentName, entryId: entry.id, userId: entry.userId });
+      return { id: `rb-${entry.id}`, opponentName } as MatchView;
+    }),
     viewMatch: vi.fn(async (matchId) => ({ id: matchId }) as MatchView),
   };
-  return { deps, rows, created, realMatches, wait: (ms: number) => (clock.now += ms) };
+  return { deps, rows, created, realMatches, rankedBots, wait: (ms: number) => (clock.now += ms) };
 }
 
 describe("Quick Match queue", () => {
@@ -237,30 +244,53 @@ describe("Ranked queue (§13.5)", () => {
     expect(created).toEqual([]);
   });
 
-  it("never gives a ranked player the bot: after the window there is simply no opponent", async () => {
-    const { deps, rows, created, wait } = setup();
+  it("searches for a random 9-12 s", async () => {
+    expect([RANKED_SEARCH_MIN_MS, RANKED_SEARCH_MAX_MS]).toEqual([9_000, 12_000]);
+    const { deps } = setup();
+    const windows = await Promise.all(
+      Array.from({ length: 50 }, async () => (await joinRankedQueue("s", ALICE, deps)).searchUntil - deps.now()),
+    );
+    expect(Math.min(...windows)).toBeGreaterThanOrEqual(RANKED_SEARCH_MIN_MS);
+    expect(Math.max(...windows)).toBeLessThanOrEqual(RANKED_SEARCH_MAX_MS);
+  });
+
+  it("gives the match to the bot, for this account, once nobody turned up in time", async () => {
+    const { deps, rows, created, rankedBots, wait } = setup();
     const a = await joinRankedQueue("alice", ALICE, deps);
-    wait(SEARCH_MIN_MS - 1);
+    wait(RANKED_SEARCH_MIN_MS - 1);
     expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "searching" });
-    wait(SEARCH_MAX_MS);
+    wait(RANKED_SEARCH_MAX_MS);
+    expect(await pollQueue(a.id, "alice", deps)).toMatchObject({ status: "found", view: { id: `rb-${a.id}` } });
+    expect(await pollQueue(a.id, "alice", deps)).toMatchObject({ status: "found", view: { id: `rb-${a.id}` } }); // the same one again
+    expect(rows.get(a.id)).toMatchObject({ status: "timed_out", matchId: `rb-${a.id}` });
+    expect(rankedBots).toEqual([{ opponentName: expect.stringMatching(/^[\p{L}\p{N}_]{3,16}$/u), entryId: a.id, userId: "user-alice" }]);
+    expect(rankedBots[0].opponentName).not.toMatch(/bot/i);
+    expect(created).toEqual([]); // not a Quick Match bot match
+  });
+
+  it("says no-opponent only when even the bot's match cannot be made", async () => {
+    const { deps, wait } = setup();
+    vi.mocked(deps.createRankedBotMatch).mockRejectedValueOnce(new Error("database down"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const a = await joinRankedQueue("alice", ALICE, deps);
+    wait(RANKED_SEARCH_MAX_MS + 1);
     expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "no-opponent" });
-    expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "no-opponent" }); // and stays so
-    expect(rows.get(a.id)).toMatchObject({ status: "timed_out", matchId: null });
-    expect(created).toEqual([]);
+    warn.mockRestore();
   });
 
   it("keeps the lanes apart: a ranked and a Quick Match player searching together are never paired", async () => {
-    const { deps, rows, created, realMatches, wait } = setup();
+    const { deps, rows, created, realMatches, rankedBots, wait } = setup();
     const ranked = await joinRankedQueue("alice", ALICE, deps);
     const quick = await joinQueue("bob", "Bob_2", deps);
     expect(await pollQueue(quick.id, "bob", deps)).toEqual({ status: "searching" });
     expect(await pollQueue(ranked.id, "alice", deps)).toEqual({ status: "searching" });
     expect([rows.get(ranked.id)?.status, rows.get(quick.id)?.status]).toEqual(["waiting", "waiting"]);
 
-    wait(SEARCH_MAX_MS + 1);
-    expect(await pollQueue(ranked.id, "alice", deps)).toEqual({ status: "no-opponent" });
-    expect((await pollQueue(quick.id, "bob", deps)).status).toBe("found"); // Quick Match as before: the bot
+    wait(RANKED_SEARCH_MAX_MS + 1);
+    expect((await pollQueue(ranked.id, "alice", deps)).status).toBe("found"); // each gets its own lane's bot
+    expect((await pollQueue(quick.id, "bob", deps)).status).toBe("found");
     expect(created).toEqual([{ opponentName: expect.any(String), queueEntryId: quick.id }]);
+    expect(rankedBots.map((b) => b.entryId)).toEqual([ranked.id]);
     expect(realMatches).toEqual([]);
   });
 
@@ -273,14 +303,15 @@ describe("Ranked queue (§13.5)", () => {
     expect(rows.get(a.id)?.status).toBe("waiting");
   });
 
-  it("does not fall back to the bot when the shared ranked match never arrives", async () => {
-    const { deps, created, wait } = setup();
+  it("falls back to the ranked bot when the shared ranked match never arrives", async () => {
+    const { deps, created, rankedBots, wait } = setup();
     const a = await joinRankedQueue("alice", ALICE, deps); // pairs, then Alice's tab closes
     await pollQueue(a.id, "alice", deps);
     const b = await joinRankedQueue("bob", BOB, deps);
     expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });
     wait(HANDOFF_MS + 1);
-    expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "no-opponent" });
+    expect((await pollQueue(b.id, "bob", deps)).status).toBe("found");
+    expect(rankedBots.map((r) => r.userId)).toEqual(["user-bob"]);
     expect(created).toEqual([]);
   });
 });

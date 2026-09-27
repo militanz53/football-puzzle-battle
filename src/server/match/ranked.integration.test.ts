@@ -4,8 +4,8 @@ import { getPublicSupabase } from "@/lib/supabase/public";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { QUEUE_TABLE, supabaseQueueStore } from "./queueStore";
 import { checkIn, createMatch, defaultDeps, runOnMatch } from "./runner";
-import { LEAVE_AFTER_MS, START_GRACE_MS, startRound } from "./service";
-import { MATCHES_TABLE } from "./store";
+import { abandonSolo, LEAVE_AFTER_MS, START_GRACE_MS, startRound } from "./service";
+import { findActiveRankedBotMatch, findUnfinishedRankedBotMatches, MATCHES_TABLE } from "./store";
 
 // Live checks of Ranked (§13.5, §14) against the Supabase project in .env.local:
 // npm run test:supabase. Two throwaway accounts are made and deleted again (their
@@ -38,7 +38,11 @@ beforeAll(async () => {
 afterAll(async () => {
   if (matches.length) await admin().from(MATCHES_TABLE).delete().in("id", matches);
   if (entries.length) await admin().from(QUEUE_TABLE).delete().in("id", entries);
-  for (const id of users) await admin().auth.admin.deleteUser(id); // profiles cascade
+  // Profiles and queue rows cascade; a paired partner row forgets the pairing.
+  for (const id of users) {
+    const { error } = await admin().auth.admin.deleteUser(id);
+    if (error) throw new Error(`Could not delete test account ${id}: ${error.message}`);
+  }
 });
 
 describe("profiles", () => {
@@ -147,5 +151,37 @@ describe("settling a ranked match", () => {
   it("cannot be called with the publishable key", async () => {
     const rpc = await getPublicSupabase().rpc("settle_ranked_match", { p_match: crypto.randomUUID(), p_result: {} });
     expect(rpc.error).not.toBeNull();
+  });
+});
+
+describe("a ranked match against the bot", () => {
+  it("updates only the player's profile, exactly once, and is marked as the bot's in the table only", async () => {
+    const carl = await account(`itS_${suffix}`, 1300);
+    const deps = defaultDeps();
+    const solo = { userId: carl, username: `itS_${suffix}`, rating: 1300, opponentRating: 1262 };
+    const view = await createMatch(deps, "Oğuz1989", { opponentKind: "bot", queueEntryId: null, playerSession: "it-solo", mode: "ranked" }, null, solo);
+    matches.push(view.id);
+    expect(view.ranked?.opponent).toEqual({ username: "Oğuz1989", rating: 1262, tier: "Pro" });
+
+    // Unfinished: resumed on a reload, and found as walked-away-from by a new search.
+    expect(await findActiveRankedBotMatch("it-solo", Date.now(), admin())).toBe(view.id);
+    expect(await findUnfinishedRankedBotMatches(carl, admin())).toEqual([view.id]);
+
+    const over = await runOnMatch(view.id, abandonSolo, deps, "it-solo");
+    expect(over.ranked?.change).toEqual({ before: 1300, after: 1282, delta: -18, tierBefore: "Pro", tierAfter: "Pro" });
+    expect(await findUnfinishedRankedBotMatches(carl, admin())).toEqual([]);
+
+    // A second settle changes nothing.
+    await admin().rpc("settle_ranked_match", { p_match: view.id, p_result: { a: { delta: -999 }, b: { delta: 999 } } });
+    expect(await getProfile(carl, admin())).toMatchObject({ rating: 1282, matchesPlayed: 1, matchesWon: 0, matchesLost: 1 });
+    const { data } = await admin().from(MATCHES_TABLE).select("mode, opponent_kind, ranked_result").eq("id", view.id).single();
+    expect(data).toMatchObject({ mode: "ranked", opponent_kind: "bot", ranked_result: { a: { delta: -18 } } });
+  });
+
+  it("refuses a ranked bot match without its player (ranked_solo) and a Quick Match with one", async () => {
+    const insert = await admin()
+      .from(MATCHES_TABLE)
+      .insert({ status: "playing", round_number: 1, current_puzzle_id: "x", state: {}, mode: "quick", opponent_kind: "bot", ranked_solo: { userId: alice } });
+    expect(insert.error?.code).toBe("23514");
   });
 });

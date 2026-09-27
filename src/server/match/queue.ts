@@ -10,13 +10,19 @@ import type { MatchView } from "./view";
 // only (match_queue.status, matches.opponent_kind), never shown.
 //
 // Ranked (§13.5) uses the same queue in its own lane (match_queue.mode): a ranked
-// entry is only paired with another ranked entry, never with its own account, and
-// never gets the bot. Rating against the bot would mean nothing, so a ranked search
-// that finds nobody simply ends ("no-opponent") and the player may search again.
+// entry is only paired with another ranked entry, never with its own account. It
+// searches a little longer (9-12 s); if nobody turns up, the bot takes the match as in
+// Quick Match, under a nickname and a rating close to the player's own ("ghost"
+// rating, ./ranked.ts), and only the player's rating moves. The screen never says
+// it was the bot; matches.opponent_kind records it. "no-opponent" is left for when
+// even that match cannot be made.
 
 /** The search lasts a random 5-10 s (7.5 s on average), like a real queue would. */
 export const SEARCH_MIN_MS = 5_000;
 export const SEARCH_MAX_MS = 10_000;
+/** Ranked searches for a random 9-12 s before the bot steps in. */
+export const RANKED_SEARCH_MIN_MS = 9_000;
+export const RANKED_SEARCH_MAX_MS = 12_000;
 /** A waiting entry is only paired while its screen is still polling (and once it has polled at all). */
 export const FRESH_SECONDS = 5;
 /**
@@ -66,6 +72,8 @@ export interface QueueDeps {
   rng: Rng;
   /** Creates the match against the engine's opponent and returns its view. */
   createMatch: (opponentName: string, queueEntryId: string) => Promise<MatchView>;
+  /** Ranked: the match against the engine's opponent for this entry's account (a ghost rating near theirs). */
+  createRankedBotMatch: (opponentName: string, entry: QueueEntry) => Promise<MatchView>;
   /** Creates one match for two paired players and returns it as seat a sees it. */
   createRealMatch: (a: QueuedPlayer, b: QueuedPlayer, mode: QueueMode) => Promise<MatchView>;
   /** The view of a match already created for this entry. */
@@ -84,7 +92,7 @@ export type QueuePoll =
   | { status: "searching" }
   | { status: "found"; view: MatchView }
   | { status: "gone" }
-  /** Ranked only: the search window passed without another ranked player. */
+  /** Ranked only: not even the bot's match could be made (a system fault). */
   | { status: "no-opponent" };
 
 export class QueueAccessError extends Error {
@@ -94,15 +102,16 @@ export class QueueAccessError extends Error {
   }
 }
 
-const searchWindow = (deps: QueueDeps) => SEARCH_MIN_MS + Math.floor(deps.rng() * (SEARCH_MAX_MS - SEARCH_MIN_MS + 1));
+const searchWindow = (deps: QueueDeps, min: number, max: number) => min + Math.floor(deps.rng() * (max - min + 1));
 
 export async function joinQueue(sessionId: string, nickname: string, deps: QueueDeps): Promise<QueueEntry> {
-  return deps.store.insert(sessionId, deps.now() + searchWindow(deps), nickname);
+  return deps.store.insert(sessionId, deps.now() + searchWindow(deps, SEARCH_MIN_MS, SEARCH_MAX_MS), nickname);
 }
 
 /** RANKED: joins the ranked lane as this account, under its username. */
 export async function joinRankedQueue(sessionId: string, account: { userId: string; username: string }, deps: QueueDeps): Promise<QueueEntry> {
-  return deps.store.insert(sessionId, deps.now() + searchWindow(deps), account.username, account.userId);
+  const until = deps.now() + searchWindow(deps, RANKED_SEARCH_MIN_MS, RANKED_SEARCH_MAX_MS);
+  return deps.store.insert(sessionId, until, account.username, account.userId);
 }
 
 /**
@@ -147,11 +156,19 @@ export async function pollQueue(entryId: string, sessionId: string, deps: QueueD
     // The builder never came back with the match: play the bot rather than wait forever.
   }
 
-  // Ranked never plays the bot: nobody (or nobody reliable) was found.
-  if (entry.mode === "ranked") return { status: "no-opponent" };
-
   // Timed out (or the pairing fell through): this entry's match against the bot.
-  const view = await deps.createMatch(randomNickname(deps.rng), entry.id);
+  let view: MatchView;
+  if (entry.mode === "ranked") {
+    try {
+      view = await deps.createRankedBotMatch(randomNickname(deps.rng), entry);
+    } catch (e) {
+      // Not even the bot's match could be made (a system fault): tell the player.
+      console.warn(`Ranked bot match for queue entry ${entry.id} failed: ${(e as Error).message}`);
+      return { status: "no-opponent" };
+    }
+  } else {
+    view = await deps.createMatch(randomNickname(deps.rng), entry.id);
+  }
   if (!(await deps.store.setMatch(entry.id, view.id))) {
     const winner = await deps.store.get(entry.id);
     if (winner?.matchId) return { status: "found", view: await deps.viewMatch(winner.matchId) };
