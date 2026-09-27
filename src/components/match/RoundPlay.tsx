@@ -2,21 +2,21 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type NameEntry, suggestNames } from "@/data/names";
-import { isRoundFinished, type ObservedRound } from "@/game/match";
-import { ANSWER_WINDOW_MS, revealStage, type RoundState, type Side } from "@/game/round";
+import { ANSWER_WINDOW_MS, type Side } from "@/game/round";
 import { pointsForReveal, REVEAL_COUNT, REVEAL_POINTS } from "@/game/scoring";
 import type { Puzzle } from "@/game/types";
 import { PUZZLE_LABEL, PuzzleBoard } from "@/components/puzzles/PuzzleBoard";
 import { roundCues } from "@/components/sound/cues";
 import { play } from "@/components/sound/player";
+import type { PublicRound } from "@/server/match/view";
+import { displayStage } from "./display";
 import { Scoreboard } from "./Scoreboard";
-import { useRound } from "./useRound";
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
 /** Sudden Death decides the match without points (§12.1), so it hides the per-reveal values. */
-function RevealTimer({ state, suddenDeath }: { state: RoundState; suddenDeath: boolean }) {
-  const stage = revealStage(state);
+function RevealTimer({ state, suddenDeath }: { state: PublicRound; suddenDeath: boolean }) {
+  const stage = displayStage(state);
   const isLast = stage === REVEAL_COUNT;
   const nextAt = isLast ? state.windowMs : stage * state.intervalMs;
   const secondsLeft = Math.ceil((nextAt - state.clockMs) / 1000);
@@ -64,12 +64,15 @@ function AnswerPanel({
   answerMs,
   worth,
   names,
+  submitting,
   onSubmit,
 }: {
   answerMs: number;
   /** Points at stake, or null in Sudden Death. */
   worth: number | null;
   names: NameEntry[];
+  /** The server is checking the answer (§27: the browser no longer knows it). */
+  submitting: boolean;
   onSubmit: (text: string) => void;
 }) {
   const [text, setText] = useState("");
@@ -143,6 +146,7 @@ function AnswerPanel({
           }}
           placeholder="Type the player's name"
           aria-label="Your answer"
+          readOnly={submitting}
           role="combobox"
           aria-autocomplete="list"
           aria-expanded={open}
@@ -156,9 +160,10 @@ function AnswerPanel({
         />
         <button
           type="submit"
-          className="h-14 shrink-0 rounded-2xl bg-accent px-5 font-display text-base font-bold uppercase tracking-wider text-bg-primary transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+          disabled={submitting}
+          className="h-14 shrink-0 rounded-2xl bg-accent px-5 font-display text-base font-bold uppercase tracking-wider text-bg-primary transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:opacity-60"
         >
-          Submit
+          {submitting ? "Checking…" : "Submit"}
         </button>
       </div>
     </form>
@@ -169,12 +174,14 @@ function BuzzArea({
   state,
   suddenDeath,
   names,
+  submitting,
   onBuzz,
   onSubmit,
 }: {
-  state: RoundState;
+  state: PublicRound;
   suddenDeath: boolean;
   names: NameEntry[];
+  submitting: boolean;
   onBuzz: () => void;
   onSubmit: (text: string) => void;
 }) {
@@ -182,7 +189,7 @@ function BuzzArea({
   const stake = (reveal: number) => (suddenDeath ? null : pointsForReveal(reveal));
 
   if (player.kind === "answering") {
-    return <AnswerPanel answerMs={state.answerMs} worth={stake(player.reveal)} names={names} onSubmit={onSubmit} />;
+    return <AnswerPanel answerMs={state.answerMs} worth={stake(player.reveal)} names={names} submitting={submitting} onSubmit={onSubmit} />;
   }
 
   if (player.kind === "correct" || player.kind === "wrong") {
@@ -206,7 +213,7 @@ function BuzzArea({
   }
 
   const blocked = state.answering === "bot";
-  const worth = stake(revealStage(state));
+  const worth = stake(displayStage(state));
   return (
     <div className="flex flex-col items-center gap-3">
       <button
@@ -230,7 +237,7 @@ function BuzzArea({
 }
 
 /** §23: round start on mount, then reveal / buzz / correct / wrong as the round changes. */
-function useRoundSounds(round: RoundState) {
+function useRoundSounds(round: PublicRound) {
   const previous = useRef(round);
   useEffect(() => play("roundStart"), []);
   useEffect(() => {
@@ -239,44 +246,43 @@ function useRoundSounds(round: RoundState) {
   }, [round]);
 }
 
-/** One live round: scoreboard, puzzle, reveal timer and buzz/answer controls (§10). */
+/**
+ * One live round as the server runs it (§10, §27): scoreboard, puzzle, reveal timer
+ * and buzz/answer controls. It draws `round` and reports taps; the server decides.
+ */
 export function RoundPlay({
   puzzle,
+  round,
   suddenDeath,
   totals,
   names,
-  onFinish,
+  submitting,
+  onBuzz,
+  onSubmit,
 }: {
+  /** Without its answer while the round runs (src/server/match/view.ts). */
   puzzle: Puzzle;
+  round: PublicRound;
   suddenDeath: boolean;
   totals: Record<Side, number>;
   /** Autocomplete index for the answer box. */
   names: NameEntry[];
-  onFinish: (round: ObservedRound) => void;
+  submitting: boolean;
+  onBuzz: () => void;
+  onSubmit: (text: string) => void;
 }) {
-  const { state, buzz, submit } = useRound(puzzle);
-  const { round } = state;
   useRoundSounds(round);
-
-  const finished = isRoundFinished(state, suddenDeath);
-  const reported = useRef(false);
-  useEffect(() => {
-    if (finished && !reported.current) {
-      reported.current = true;
-      onFinish(state);
-    }
-  }, [finished, state, onFinish]);
 
   // Desktop convenience: Space buzzes (ignored while typing an answer).
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.code !== "Space" || e.target instanceof HTMLInputElement) return;
       e.preventDefault();
-      buzz();
+      onBuzz();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [buzz]);
+  }, [onBuzz]);
 
   return (
     <>
@@ -292,7 +298,7 @@ export function RoundPlay({
           {suddenDeath ? `Sudden death · ${PUZZLE_LABEL[puzzle.type]}` : PUZZLE_LABEL[puzzle.type]}
         </p>
         <h1 className="mb-3 mt-0.5 font-display text-xl font-bold text-text-primary">{puzzle.question}</h1>
-        <PuzzleBoard puzzle={puzzle} revealed={revealStage(round)} />
+        <PuzzleBoard puzzle={puzzle} revealed={displayStage(round)} />
       </section>
 
       <div className="mt-4">
@@ -300,7 +306,7 @@ export function RoundPlay({
       </div>
 
       <div className="mt-auto flex justify-center pt-5">
-        <BuzzArea state={round} suddenDeath={suddenDeath} names={names} onBuzz={buzz} onSubmit={submit} />
+        <BuzzArea state={round} suddenDeath={suddenDeath} names={names} submitting={submitting} onBuzz={onBuzz} onSubmit={onSubmit} />
       </div>
     </>
   );

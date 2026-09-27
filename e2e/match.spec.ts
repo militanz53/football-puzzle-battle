@@ -5,6 +5,7 @@ import {
   buzz,
   currentPuzzle,
   expect,
+  forceBotWrong,
   test,
   TYPE_LABEL,
   waitForClue,
@@ -142,27 +143,22 @@ test.describe("MVP 0.1 match against the bot", () => {
 
   test("tied match goes to sudden death", async ({ page, shot, log }) => {
     // The bot answers 70% correctly, so a 0-0 match cannot happen by chance in a test.
-    // In the browser, Math.random calls made by planBotTurn (bot.ts) return 0.99, so every
-    // bot plan is "buzz at reveal 4, answer wrong"; the app itself is unchanged. Only the
-    // bot's draws are pinned: a constant Math.random everywhere breaks React's click
-    // handling. This relies on dev-server function names (the webServer runs `next dev`);
-    // the "Wrong after 4 clues" checks below fail loudly if it ever stops working.
-    await page.addInitScript(() => {
-      const random = Math.random.bind(Math);
-      Math.random = () => (new Error().stack?.includes("planBotTurn") ? 0.99 : random());
-    });
+    // The bot plays on the server (§29.1), so each round the test sets its plan to
+    // "answer wrong" in the match row (forceBotWrong); the app itself is unchanged.
+    // The "Wrong after N clues" checks below fail loudly if that ever stops working.
     await openMatchFromMenu(page, shot);
 
     let next = "";
     for (let round = 1; round <= 5; round++) {
       await test.step(`round ${round}: nobody scores`, async () => {
         const puzzle = await currentPuzzle(page);
+        await forceBotWrong(page);
         await expect(page.getByText(`Round ${round}/5 · ${TYPE_LABEL[puzzle.type]}`)).toBeVisible();
         // Regular rounds show what each reveal is worth under the timer (§8).
         if (round === 1) await expect(page.getByText("1000", { exact: true })).toBeVisible();
         next = await waitForRoundResult(page);
         await expect(page.getByRole("heading", { name: "No answer" })).toBeVisible();
-        await expect(page.getByText(/^Wrong after 4 clues/)).toBeVisible();
+        await expect(page.getByText(/^Wrong after [2-4] clues/)).toBeVisible();
         if (round === 5) await shot("round-5-result-level");
         if (round < 5) await waitForNextRound(page);
       });

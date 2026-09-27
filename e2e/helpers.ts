@@ -140,3 +140,42 @@ export async function signInAsAdmin(page: Page, path = "/admin") {
   await page.getByRole("button", { name: "Sign in" }).click();
   await expect(page).toHaveURL(new RegExp(`${path.replace(/[?]/g, "\?")}$`));
 }
+
+// ---------------------------------------------------------------------------
+// Server-side match (GDD §27)
+// ---------------------------------------------------------------------------
+
+/** The id of the match on screen. */
+export async function matchIdOnScreen(page: Page): Promise<string> {
+  const id = await page.locator("[data-match-id]").getAttribute("data-match-id");
+  if (!id) throw new Error("No match on screen");
+  return id;
+}
+
+/**
+ * Makes the bot answer the running round wrongly. The bot now plays on the server
+ * (§29.1), so the test edits its plan in the match row, as the only writer besides
+ * the server, bumping the version like the server does. Call it as soon as a round
+ * is on screen: the bot never buzzes before reveal 2.
+ */
+export async function forceBotWrong(page: Page): Promise<void> {
+  const id = await matchIdOnScreen(page);
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const { data, error } = await db.from("matches").select("version, round").eq("id", id).single();
+    if (error) throw new Error(error.message);
+    if (!data.round) {
+      await page.waitForTimeout(100); // the round is starting
+      continue;
+    }
+    const round = { ...data.round, botPlan: { ...data.round.botPlan, correct: false } };
+    const saved = await db
+      .from("matches")
+      .update({ round, version: data.version + 1 })
+      .eq("id", id)
+      .eq("version", data.version)
+      .select("id");
+    if (saved.error) throw new Error(saved.error.message);
+    if (saved.data.length > 0) return;
+  }
+  throw new Error("Could not change the bot plan");
+}

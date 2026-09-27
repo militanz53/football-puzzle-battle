@@ -1,24 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { buildNameIndex } from "@/data/names";
-import {
-  advance,
-  createMatch,
-  decidedWinner,
-  recordRound,
-  regularRoundsPlayed,
-  totals,
-  type MatchState,
-  type ObservedRound,
-} from "@/game/match";
-import type { Puzzle } from "@/game/types";
+import { useEffect, useRef } from "react";
+import type { NameEntry } from "@/data/names";
+import { decidedWinner, regularRoundsPlayed, totals, type MatchState } from "@/game/match";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
+import { roundCues } from "@/components/sound/cues";
+import { play } from "@/components/sound/player";
 import { SoundToggle } from "@/components/sound/SoundToggle";
+import type { MatchView, PublicRound } from "@/server/match/view";
 import { MatchResult } from "./MatchResult";
 import { RoundPlay } from "./RoundPlay";
 import { RoundResult } from "./RoundResult";
+import { useServerMatch } from "./useServerMatch";
 
 /**
  * §11 says the next round starts "about 2 seconds" after the result. The result
@@ -83,67 +77,55 @@ function nextLabel(match: MatchState): string {
   return decidedWinner(match) ? "See match result" : "Sudden death";
 }
 
-/** Match screen (§10): 5 rounds in §5 order, round results, then the match result. */
-export function MatchScreen({
-  pool,
-  initialSchedule,
-  drawSchedule,
-}: {
-  pool: Puzzle[];
-  initialSchedule: Puzzle[];
-  /** Server Function: each match's puzzles are drawn on the server. */
-  drawSchedule: () => Promise<Puzzle[]>;
-}) {
-  const [match, setMatch] = useState(() => createMatch(initialSchedule));
-  const names = useMemo(() => buildNameIndex(pool), [pool]);
-  const drawing = useRef(false);
-  // Bumped for every new round so RoundPlay remounts with a fresh engine state.
-  const [roundKey, setRoundKey] = useState(0);
-
-  const onFinish = useCallback((round: ObservedRound) => {
-    setMatch((m) => (m.status === "playing" ? recordRound(m, round) : m));
-  }, []);
-
-  const next = useCallback(() => {
-    const roll = Math.random(); // drawn here so the state updater stays pure
-    setMatch((m) => (m.status === "round-result" ? advance(m, pool, () => roll) : m));
-    setRoundKey((k) => k + 1);
-  }, [pool]);
-
-  const rematch = useCallback(async () => {
-    if (drawing.current) return; // ignore repeat taps while the draw is in flight
-    drawing.current = true;
-    try {
-      const schedule = await drawSchedule();
-      setMatch(createMatch(schedule));
-      setRoundKey((k) => k + 1);
-    } finally {
-      drawing.current = false;
-    }
-  }, [drawSchedule]);
-
-  useEffect(() => {
-    if (match.status !== "round-result") return;
-    const id = window.setTimeout(next, NEXT_ROUND_DELAY_MS);
-    return () => window.clearTimeout(id);
-  }, [match.status, match.rounds.length, next]);
-
+/**
+ * Match screen (§10): 5 rounds in §5 order, round results, then the match result.
+ * The server runs the match (§27, src/app/match/actions.ts); this screen shows its
+ * latest view and passes on the player's taps.
+ */
+export function MatchScreen({ initialView, names }: { initialView: MatchView; names: NameEntry[] }) {
+  const { view, round, submitting, buzz, submit, next, rematch } = useServerMatch(initialView);
+  const { match } = view;
   const scores = totals(match.rounds);
   const lastRound = match.rounds.at(-1);
 
+  useEffect(() => {
+    if (match.status !== "round-result") return;
+    const timer = window.setTimeout(next, NEXT_ROUND_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [match.status, match.rounds.length, next]);
+
+  // When the player's answer is the round's last move, the server answers with the
+  // finished round straight away, so the round screen never shows the outcome: play
+  // its correct / wrong sound (§23) from the result instead.
+  const lastShown = useRef<PublicRound | null>(null);
+  useEffect(() => {
+    if (round) lastShown.current = round;
+  }, [round]);
+  useEffect(() => {
+    const shown = lastShown.current;
+    if (!lastRound || !shown) return;
+    for (const cue of roundCues(shown, { ...shown, player: lastRound.player, bot: lastRound.bot })) {
+      if (cue !== "reveal" && cue !== "buzz") play(cue);
+    }
+    lastShown.current = null;
+  }, [match.rounds.length, lastRound]);
+
   return (
-    <main className="flex flex-1 justify-center px-5">
+    <main data-match-id={view.id} className="flex flex-1 justify-center px-5">
       <div className="flex w-full max-w-[390px] flex-col py-4">
         <TopBar match={match} />
 
-        {match.status === "playing" && (
+        {match.status === "playing" && round && (
           <RoundPlay
-            key={roundKey}
+            key={`${view.id}:${match.rounds.length}`}
             puzzle={match.current}
+            round={round}
             suddenDeath={match.suddenDeath}
             totals={scores}
             names={names}
-            onFinish={onFinish}
+            submitting={submitting}
+            onBuzz={buzz}
+            onSubmit={submit}
           />
         )}
 

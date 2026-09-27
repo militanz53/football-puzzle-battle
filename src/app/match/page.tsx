@@ -1,19 +1,20 @@
 import type { Metadata } from "next";
 import { connection } from "next/server";
 import { MatchScreen } from "@/components/match/MatchScreen";
+import { buildNameIndex } from "@/data/names";
 import { fetchPublishedPuzzles } from "@/data/puzzles";
-import { buildSchedule } from "@/game/match";
-import { drawSchedule } from "./actions";
+import { createMatch, defaultDeps } from "@/server/match/runner";
 
 export const metadata: Metadata = {
   title: "Match · Football Puzzle Battle",
 };
 
 export default async function MatchPage() {
-  // Draw the schedule per request, not at build time, so every match differs and
-  // the server-rendered first round matches what the client hydrates. One query
-  // serves both the schedule and the Sudden Death pool; rematch draws via drawSchedule.
+  // A new server-side match per visit (§27): the server draws the puzzles and will run
+  // the rounds; the first one starts when the screen is up. The browser gets the
+  // match view (no answers, no bot plan) and the autocomplete names.
   await connection();
   const pool = await fetchPublishedPuzzles();
-  return <MatchScreen pool={pool} initialSchedule={buildSchedule(pool, Math.random)} drawSchedule={drawSchedule} />;
+  const view = await createMatch({ ...defaultDeps(), loadPool: async () => pool });
+  return <MatchScreen initialView={view} names={buildNameIndex(pool)} />;
 }
