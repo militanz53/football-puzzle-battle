@@ -9,7 +9,7 @@ const visibleText = (page: import("@playwright/test").Page) => page.locator("bod
 
 test("searching, then a named opponent, and never a mention of a bot", async ({ page, shot }) => {
   await page.goto("/");
-  await page.getByRole("link", { name: "Play" }).click();
+  await page.getByRole("link", { name: "Quick Match" }).click();
 
   await test.step("the searching screen shows while the server looks for an opponent", async () => {
     await expect(page.getByRole("heading", { name: "Finding an opponent…" })).toBeVisible();

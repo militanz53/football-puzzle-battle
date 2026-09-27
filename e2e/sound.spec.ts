@@ -25,7 +25,7 @@ test("sounds play in a match and the mute choice is remembered", async ({ page, 
   await shot("main-menu-sound-on");
 
   // Tapping PLAY unlocks audio; the round-start beeps (2 tones) follow.
-  await page.getByRole("link", { name: "Play" }).click();
+  await page.getByRole("link", { name: "Quick Match" }).click();
   await waitForOpponent(page);
   await expect.poll(() => tones(page)).toBeGreaterThanOrEqual(2);
 

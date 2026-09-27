@@ -31,9 +31,9 @@ const PLAN: { strategy: Strategy; headline: string; points: number }[] = [
 
 async function openMatchFromMenu(page: Page, shot: (name: string) => Promise<void>) {
   await page.goto("/");
-  await expect(page.getByRole("link", { name: "Play" })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Quick Match" })).toBeVisible();
   await shot("main-menu");
-  await page.getByRole("link", { name: "Play" }).click();
+  await page.getByRole("link", { name: "Quick Match" }).click();
   await expect(page).toHaveURL(/\/match$/);
   await waitForOpponent(page); // Quick Match: searching screen, then the match (§13.1)
 }

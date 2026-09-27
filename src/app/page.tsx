@@ -1,22 +1,40 @@
 // Main Menu — GDD §21 (first prototype: PLAY, PRACTICE, HOW TO PLAY) styled per §22.
-// PLAY opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
+// QUICK MATCH opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
 
+import Image from "next/image";
 import Link from "next/link";
-import { NicknameField } from "@/components/NicknameField";
+import { MenuLobby } from "@/components/menu/MenuLobby";
 import { SoundToggle } from "@/components/sound/SoundToggle";
 import { randomPlayerName } from "@/lib/nickname";
 import { readIdentity } from "@/lib/session";
+import stadium from "../../public/images/stadium-bg.png";
+
+/** The night stadium behind the menu, pushed back under navy so it never competes with the text. */
+function Backdrop() {
+  return (
+    <div aria-hidden className="pointer-events-none absolute inset-0 -z-10">
+      <Image
+        src={stadium}
+        alt=""
+        fill
+        preload
+        sizes="100vw"
+        quality={70}
+        placeholder="blur"
+        className="object-cover object-top"
+      />
+      {/* Darkest behind the cards and buttons, a little of the floodlights left at the top. */}
+      <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(11,18,32,0.4)_0%,rgba(11,18,32,0.35)_25%,rgba(11,18,32,0.82)_52%,rgba(11,18,32,0.96)_75%,#0b1220_100%)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_35%,rgba(11,18,32,0.75)_100%)]" />
+    </div>
+  );
+}
 
 function Logo() {
   return (
-    <div className="relative flex flex-col items-center gap-5">
-      {/* Centre circle framing the wordmark: a nod to "football pitches" (§3.3) */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute left-1/2 top-1/2 h-[320px] w-[320px] -translate-x-1/2 -translate-y-1/2 rounded-full border-[1.5px] border-border-subtle opacity-60"
-      />
-      <div className="relative flex h-20 w-20 items-center justify-center rounded-[20px] border border-border-subtle bg-bg-surface shadow-[0_0_48px_-12px_rgba(62,213,152,0.45)]">
-        <svg viewBox="0 0 48 48" className="h-11 w-11" aria-hidden>
+    <div className="relative flex flex-col items-center gap-4">
+      <div className="relative flex h-16 w-16 items-center justify-center rounded-[18px] border border-accent/30 bg-bg-surface/80 shadow-[0_0_56px_-6px_rgba(62,213,152,0.6)] backdrop-blur-sm">
+        <svg viewBox="0 0 48 48" className="h-9 w-9" aria-hidden>
           <circle cx="24" cy="24" r="21" fill="none" stroke="#3ED598" strokeWidth="3" />
           <path d="M24 14.5l7.6 5.5-2.9 8.9h-9.4l-2.9-8.9z" fill="#3ED598" />
           <path
@@ -27,10 +45,10 @@ function Logo() {
           />
         </svg>
       </div>
-      <h1 className="relative text-center font-display font-bold uppercase leading-[0.95] tracking-tight">
-        <span className="block text-[2.75rem] text-text-primary">Football</span>
-        <span className="block text-[2.75rem] text-text-primary">Puzzle</span>
-        <span className="block text-[2.75rem] text-accent">Battle</span>
+      <h1 className="relative text-center font-display text-[2.5rem] font-bold uppercase leading-[0.95] tracking-tight drop-shadow-[0_2px_12px_rgba(11,18,32,0.9)]">
+        <span className="block text-text-primary">Football</span>
+        <span className="block text-text-primary">Puzzle</span>
+        <span className="block text-accent drop-shadow-[0_0_18px_rgba(62,213,152,0.55)]">Battle</span>
       </h1>
       <p className="relative max-w-[16rem] text-center text-[15px] leading-snug text-text-secondary">
         Know it before your opponent does.
@@ -43,36 +61,35 @@ export default async function MainMenu() {
   // The nickname lives in the session cookie, so the menu renders per request.
   const identity = await readIdentity();
   return (
-    <main className="relative flex flex-1 justify-center overflow-hidden px-6">
-      <div className="relative flex w-full max-w-[390px] flex-col justify-between py-16">
-        <div className="absolute right-0 top-4">
+    <main className="relative isolate flex flex-1 justify-center overflow-hidden px-4">
+      <Backdrop />
+      <div className="relative flex w-full max-w-[390px] flex-col py-5">
+        <div className="flex justify-end">
           <SoundToggle />
         </div>
-        <div className="flex flex-1 items-center justify-center pb-12">
+        <div className="flex flex-1 items-center justify-center pb-5 pt-1">
           <Logo />
         </div>
 
-        <div className="mb-8">
-          {/* The placeholder previews the kind of name an empty box gets (drawn here, so it hydrates the same). */}
-          <NicknameField current={identity?.name ?? null} example={randomPlayerName(Math.random)} />
-        </div>
+        {/* The placeholder previews the kind of name an empty box gets (drawn here, so it hydrates the same). */}
+        <MenuLobby current={identity?.name ?? null} example={randomPlayerName(Math.random)} />
 
-        <nav className="flex flex-col gap-3" aria-label="Main menu">
+        <nav className="mt-5 flex flex-col gap-3" aria-label="Main menu">
           <Link
             href="/match"
-            className="grid h-16 w-full place-items-center rounded-2xl bg-accent font-display text-xl font-bold uppercase tracking-wider text-bg-primary shadow-[0_8px_32px_-8px_rgba(62,213,152,0.55)] transition-colors hover:bg-accent-hover active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            className="grid h-16 w-full place-items-center rounded-2xl bg-accent font-display text-xl font-bold uppercase tracking-wider text-bg-primary shadow-[0_0_28px_-2px_rgba(62,213,152,0.55),0_10px_40px_-8px_rgba(62,213,152,0.7)] transition-colors hover:bg-accent-hover active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
-            Play
+            Quick Match
           </Link>
           <button
             type="button"
-            className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-text-primary transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
             Practice
           </button>
           <button
             type="button"
-            className="h-12 w-full rounded-2xl font-display text-sm font-semibold uppercase tracking-widest text-text-secondary transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            className="mx-auto mt-1 px-3 py-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary underline decoration-text-muted-2 underline-offset-4 transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
             How to Play
           </button>

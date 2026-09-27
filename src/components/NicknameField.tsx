@@ -12,7 +12,16 @@ const SAVED_MS = 1_500;
  * "keep what I have"; a player who never sets one plays as Player_1234. Styled after
  * the match screen's player avatars (§22): the name's first letter in a green ring.
  */
-export function NicknameField({ current, example }: { current: string | null; example: string }) {
+export function NicknameField({
+  current,
+  example,
+  onNameChange,
+}: {
+  current: string | null;
+  example: string;
+  /** The name as typed (for other parts of the menu that show it, like the duel preview). */
+  onNameChange?: (name: string) => void;
+}) {
   const [value, setValue] = useState(current ?? "");
   const [saved, setSaved] = useState(current);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +87,7 @@ export function NicknameField({ current, example }: { current: string | null; ex
             onChange={(e) => {
               setValue(e.target.value);
               setError(null);
+              onNameChange?.(e.target.value);
             }}
             onBlur={save}
             // Underline only; on focus it turns accent and a 1px shadow thickens it

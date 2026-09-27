@@ -167,7 +167,7 @@ test("nicknames, a rematch both players accept, and a rematch nobody answers", a
 
   let firstMatch = "";
   await test.step("they meet under their names: A's chosen one, B's Player_XXXX", async () => {
-    await Promise.all([a.getByRole("link", { name: "Play" }).click(), b.getByRole("link", { name: "Play" }).click()]);
+    await Promise.all([a.getByRole("link", { name: "Quick Match" }).click(), b.getByRole("link", { name: "Quick Match" }).click()]);
     const [aSees, bSees] = await Promise.all([waitForOpponent(a), waitForOpponent(b)]);
     baseExpect(bSees).toBe("Alpha_1");
     baseExpect(aSees).toMatch(/^Player_\d{4}$/);
