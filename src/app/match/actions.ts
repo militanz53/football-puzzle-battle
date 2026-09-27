@@ -2,9 +2,9 @@
 
 import { checkNickname } from "@/lib/nickname";
 import { ensurePlayerName, playerSession, setPlayerName } from "@/lib/session";
-import { getServerSupabase } from "@/lib/supabase/server";
-import { joinQueue, leaveQueue, pollQueue, type QueueDeps, type QueuePoll } from "@/server/match/queue";
-import { supabaseQueueStore } from "@/server/match/queueStore";
+import { currentAccount } from "@/lib/account/auth";
+import { joinQueue, joinRankedQueue, leaveQueue, pollQueue, type QueuePoll } from "@/server/match/queue";
+import { queueDeps } from "@/server/match/queueDeps";
 import { checkIn, createMatch, defaultDeps, runOnMatch, viewMatch } from "@/server/match/runner";
 import { buzz, catchUp, linkRematch, nextRound, requestRematch, sideOf, startRound, submitAnswer } from "@/server/match/service";
 import { findActiveRealMatch, loadMatchOrigin, loadMatchWithPresence } from "@/server/match/store";
@@ -16,9 +16,10 @@ import type { MatchView } from "@/server/match/view";
 // them on its own clock, decides, stores the match and pushes the new view over
 // Realtime. Each call also returns that view, so the caller does not wait for it.
 //
-// No accounts yet (§29): a player is an anonymous session cookie. A bot match is
-// guarded by its random UUID; a match between two real players also checks that the
-// cookie holds one of its two seats, and acts for that seat.
+// A player is an anonymous session cookie, in Ranked too (the account only decides
+// who may join the ranked lane and whose rating moves). A bot match is guarded by its
+// random UUID; a match between two real players also checks that the cookie holds
+// one of its two seats, and acts for that seat.
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ANSWER_LENGTH = 100;
@@ -26,27 +27,6 @@ const MAX_ANSWER_LENGTH = 100;
 function uuid(value: unknown, what: string): string {
   if (typeof value !== "string" || !UUID.test(value)) throw new Error(`Invalid ${what}`);
   return value;
-}
-
-function queueDeps(session: string): QueueDeps {
-  const deps = defaultDeps();
-  return {
-    store: supabaseQueueStore(getServerSupabase()),
-    now: deps.now,
-    rng: deps.rng,
-    // The engine's opponent plays every match for now, paired or not (see queue.ts).
-    createMatch: (opponentName, queueEntryId) =>
-      createMatch(deps, opponentName, { opponentKind: "bot", queueEntryId, playerSession: session }),
-    // One match for two paired players: seat a is the one building it (this browser).
-    createRealMatch: (a, b) =>
-      createMatch(
-        deps,
-        b.name,
-        { opponentKind: "human", queueEntryId: null, playerSession: a.sessionId, opponentSession: b.sessionId },
-        { a: { session: a.sessionId, name: a.name }, b: { session: b.sessionId, name: b.name }, since: deps.now() },
-      ),
-    viewMatch: (matchId) => viewMatch(matchId, deps, session),
-  };
 }
 
 // ---------------------------------------------------------------------------
@@ -68,6 +48,18 @@ export async function saveNickname(input: string): Promise<{ ok: true; name: str
 export async function findOpponent(): Promise<{ entryId: string }> {
   const session = await playerSession();
   const entry = await joinQueue(session, await ensurePlayerName(), queueDeps(session));
+  return { entryId: entry.id };
+}
+
+/**
+ * RANKED (§13.5): joins the ranked lane as the signed-in account. Polling and leaving
+ * are the same calls as Quick Match; a ranked search ends in "no-opponent", never the bot.
+ */
+export async function findRankedOpponent(): Promise<{ entryId: string } | { signedOut: true }> {
+  const account = await currentAccount();
+  if (!account) return { signedOut: true };
+  const session = await playerSession();
+  const entry = await joinRankedQueue(session, { userId: account.userId, username: account.username }, queueDeps(session));
   return { entryId: entry.id };
 }
 

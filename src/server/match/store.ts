@@ -2,6 +2,7 @@ import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { MatchState } from "@/game/match";
 import type { RoundTimeline } from "@/game/timeline";
+import type { RankedResult } from "./ranked";
 import type { MatchRecord, Players, Seat } from "./service";
 import { summaryColumns } from "./view";
 
@@ -22,6 +23,7 @@ interface MatchRow {
   players: Players | null;
   ended: MatchRecord["ended"];
   rematch: MatchRecord["rematch"];
+  ranked_result: MatchRecord["rankedResult"];
   seat_a_seen_at: string | null;
   seat_b_seen_at: string | null;
 }
@@ -34,6 +36,8 @@ export interface MatchOrigin {
   playerSession: string | null;
   /** Seat b's session, for a real-player match. */
   opponentSession?: string | null;
+  /** A ranked match between two accounts (§13.5); Quick Match leaves the column's default. */
+  ranked?: boolean;
 }
 
 export class MatchStoreError extends Error {
@@ -58,6 +62,7 @@ export async function insertMatch(record: MatchRecord, origin: MatchOrigin, now:
     queue_entry_id: origin.queueEntryId,
     player_session: origin.playerSession,
     opponent_session: origin.opponentSession ?? null,
+    ...(origin.ranked ? { mode: "ranked" } : {}),
   });
   if (error) throw new MatchStoreError("create the match", error);
 }
@@ -74,7 +79,7 @@ export async function loadMatchWithPresence(
 ): Promise<{ record: MatchRecord; seen: Record<Seat, number | null> } | null> {
   const { data, error } = await db
     .from(MATCHES_TABLE)
-    .select("id, version, state, round, opponent_name, players, ended, rematch, seat_a_seen_at, seat_b_seen_at")
+    .select("id, version, state, round, opponent_name, players, ended, rematch, ranked_result, seat_a_seen_at, seat_b_seen_at")
     .eq("id", id);
   if (error) throw new MatchStoreError("load the match", error);
   const row = (data as MatchRow[])[0];
@@ -90,6 +95,7 @@ export async function loadMatchWithPresence(
       players: row.players,
       ended: row.ended,
       rematch: row.rematch,
+      rankedResult: row.ranked_result,
     },
     seen: { a: time(row.seat_a_seen_at), b: time(row.seat_b_seen_at) },
   };
@@ -128,6 +134,17 @@ export async function saveMatch(record: MatchRecord, readVersion: number, now: n
     .select("id");
   if (error) throw new MatchStoreError("save the match", error);
   return data.length > 0;
+}
+
+/**
+ * Applies a finished ranked match to both profiles, exactly once (the SQL function
+ * locks the match row). Returns the result that was stored, whichever request stored
+ * it, or null if the match is not a finished ranked one.
+ */
+export async function settleRankedMatch(id: string, result: RankedResult, db: Pick<SupabaseClient, "rpc">): Promise<RankedResult | null> {
+  const { data, error } = await db.rpc("settle_ranked_match", { p_match: id, p_result: result });
+  if (error) throw new MatchStoreError("update the ratings", error);
+  return (data as RankedResult | null) ?? null;
 }
 
 /** Real-player matches older than this are not resumed (a reloaded page starts a new search). */

@@ -3,6 +3,7 @@ import { advance, createMatch, type MatchState, recordRound } from "@/game/match
 import type { Side } from "@/game/round";
 import { replayRound, type RoundTimeline } from "@/game/timeline";
 import type { Puzzle } from "@/game/types";
+import { isRanked, type RankedResult } from "./ranked";
 
 // The match rules as run by the server (GDD §27): start a round, take a buzz or an
 // answer, notice a finished round, move on. Pure functions over a MatchRecord, the
@@ -28,6 +29,8 @@ export interface MatchRecord {
   ended?: { reason: "left"; seat: Seat } | null;
   /** After a real-player match: when each seat asked for a rematch, and the new match once both did. */
   rematch?: RematchOffers | null;
+  /** A ranked match once it is over and applied to both profiles (§14). */
+  rankedResult?: RankedResult | null;
 }
 
 export interface RematchOffers {
@@ -48,9 +51,16 @@ export type Seat = "a" | "b";
 export const sideOf = (seat: Seat): Side => (seat === "a" ? "player" : "bot");
 export const otherSeat = (seat: Seat): Seat => (seat === "a" ? "b" : "a");
 
+export interface SeatPlayer {
+  session: string;
+  name: string;
+  /** Ranked (§13.5): the account in this seat and its rating when the match was made. */
+  account?: { userId: string; rating: number };
+}
+
 export interface Players {
-  a: { session: string; name: string };
-  b: { session: string; name: string };
+  a: SeatPlayer;
+  b: SeatPlayer;
   /** When the match was made (epoch ms): presence counts from here until a seat first checks in. */
   since: number;
 }
@@ -185,7 +195,8 @@ export function forfeitIfGone(record: MatchRecord, now: number, seat: Seat, seen
  */
 export function requestRematch(record: MatchRecord, now: number, seat: Seat): Outcome & { bothAsked: boolean } {
   const offers = record.rematch ?? {};
-  if (!record.players || record.match.status !== "over") return { ...same(record), bothAsked: false };
+  // Ranked has no rematch: the same two players could trade rating back and forth.
+  if (!record.players || isRanked(record) || record.match.status !== "over") return { ...same(record), bothAsked: false };
   if (offers.next) return { ...same(record), bothAsked: true };
   const bothAsked = offerStands(offers[otherSeat(seat)], now);
   if (offerStands(offers[seat], now)) return { ...same(record), bothAsked };

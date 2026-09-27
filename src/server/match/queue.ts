@@ -8,11 +8,16 @@ import type { MatchView } from "./view";
 // turns up within the search window the entry times out and the bot takes the match
 // under a random nickname. Whether the opponent was a bot is stored in the tables
 // only (match_queue.status, matches.opponent_kind), never shown.
+//
+// Ranked (§13.5) uses the same queue in its own lane (match_queue.mode): a ranked
+// entry is only paired with another ranked entry, never with its own account, and
+// never gets the bot. Rating against the bot would mean nothing, so a ranked search
+// that finds nobody simply ends ("no-opponent") and the player may search again.
 
 /** The search lasts a random 5-10 s (7.5 s on average), like a real queue would. */
 export const SEARCH_MIN_MS = 5_000;
 export const SEARCH_MAX_MS = 10_000;
-/** A waiting entry is only paired while its screen is still polling. */
+/** A waiting entry is only paired while its screen is still polling (and once it has polled at all). */
 export const FRESH_SECONDS = 5;
 /**
  * Once paired, one of the two builds the shared match. If the other has not seen it
@@ -21,6 +26,7 @@ export const FRESH_SECONDS = 5;
 export const HANDOFF_MS = 8_000;
 
 export type QueueStatus = "waiting" | "paired" | "timed_out" | "abandoned";
+export type QueueMode = "quick" | "ranked";
 
 export interface QueueEntry {
   id: string;
@@ -32,13 +38,17 @@ export interface QueueEntry {
   matchId: string | null;
   /** When the entry was paired or timed out (epoch ms), or null while waiting. */
   resolvedAt: number | null;
-  /** The player's nickname (§13.2), shown to a real opponent. */
+  /** The player's nickname (§13.2), shown to a real opponent; a ranked entry's username. */
   nickname: string | null;
+  mode: QueueMode;
+  /** The ranked account searching; null in Quick Match. */
+  userId: string | null;
 }
 
 /** The match_queue table (./queueStore.ts), or an in-memory stand-in in tests. */
 export interface QueueStore {
-  insert(sessionId: string, searchUntil: number, nickname: string): Promise<QueueEntry>;
+  /** A new waiting entry; with `userId`, in the ranked lane. */
+  insert(sessionId: string, searchUntil: number, nickname: string, userId?: string): Promise<QueueEntry>;
   get(id: string): Promise<QueueEntry | null>;
   /** The entry's screen is still polling. */
   touch(id: string): Promise<void>;
@@ -57,15 +67,25 @@ export interface QueueDeps {
   /** Creates the match against the engine's opponent and returns its view. */
   createMatch: (opponentName: string, queueEntryId: string) => Promise<MatchView>;
   /** Creates one match for two paired players and returns it as seat a sees it. */
-  createRealMatch: (a: { sessionId: string; name: string }, b: { sessionId: string; name: string }) => Promise<MatchView>;
+  createRealMatch: (a: QueuedPlayer, b: QueuedPlayer, mode: QueueMode) => Promise<MatchView>;
   /** The view of a match already created for this entry. */
   viewMatch: (matchId: string) => Promise<MatchView>;
+}
+
+/** One side of a pairing, as the queue knows it. */
+export interface QueuedPlayer {
+  sessionId: string;
+  name: string;
+  /** Ranked only. */
+  userId: string | null;
 }
 
 export type QueuePoll =
   | { status: "searching" }
   | { status: "found"; view: MatchView }
-  | { status: "gone" };
+  | { status: "gone" }
+  /** Ranked only: the search window passed without another ranked player. */
+  | { status: "no-opponent" };
 
 export class QueueAccessError extends Error {
   constructor() {
@@ -74,9 +94,15 @@ export class QueueAccessError extends Error {
   }
 }
 
+const searchWindow = (deps: QueueDeps) => SEARCH_MIN_MS + Math.floor(deps.rng() * (SEARCH_MAX_MS - SEARCH_MIN_MS + 1));
+
 export async function joinQueue(sessionId: string, nickname: string, deps: QueueDeps): Promise<QueueEntry> {
-  const searchMs = SEARCH_MIN_MS + Math.floor(deps.rng() * (SEARCH_MAX_MS - SEARCH_MIN_MS + 1));
-  return deps.store.insert(sessionId, deps.now() + searchMs, nickname);
+  return deps.store.insert(sessionId, deps.now() + searchWindow(deps), nickname);
+}
+
+/** RANKED: joins the ranked lane as this account, under its username. */
+export async function joinRankedQueue(sessionId: string, account: { userId: string; username: string }, deps: QueueDeps): Promise<QueueEntry> {
+  return deps.store.insert(sessionId, deps.now() + searchWindow(deps), account.username, account.userId);
 }
 
 /**
@@ -109,8 +135,9 @@ export async function pollQueue(entryId: string, sessionId: string, deps: QueueD
     if (partner && entry.id < partner.id) {
       // Each sees the other's own nickname (§13.2); an entry from before nicknames gets a made-up one.
       const view = await deps.createRealMatch(
-        { sessionId: entry.sessionId, name: entry.nickname ?? randomNickname(deps.rng) },
-        { sessionId: partner.sessionId, name: partner.nickname ?? randomNickname(deps.rng) },
+        { sessionId: entry.sessionId, name: entry.nickname ?? randomNickname(deps.rng), userId: entry.userId },
+        { sessionId: partner.sessionId, name: partner.nickname ?? randomNickname(deps.rng), userId: partner.userId },
+        entry.mode,
       );
       await deps.store.setMatch(entry.id, view.id);
       await deps.store.setMatch(partner.id, view.id);
@@ -119,6 +146,9 @@ export async function pollQueue(entryId: string, sessionId: string, deps: QueueD
     if (partner && deps.now() - (entry.resolvedAt ?? deps.now()) < HANDOFF_MS) return { status: "searching" };
     // The builder never came back with the match: play the bot rather than wait forever.
   }
+
+  // Ranked never plays the bot: nobody (or nobody reliable) was found.
+  if (entry.mode === "ranked") return { status: "no-opponent" };
 
   // Timed out (or the pairing fell through): this entry's match against the bot.
   const view = await deps.createMatch(randomNickname(deps.rng), entry.id);

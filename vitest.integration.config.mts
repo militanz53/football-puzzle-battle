@@ -18,5 +18,8 @@ export default defineConfig({
     environment: "node",
     setupFiles: ["src/test/load-env.ts"],
     testTimeout: 20_000,
+    // One file at a time: they share the real match_queue, and two files searching at
+    // once would pair each other's waiting entries.
+    fileParallelism: false,
   },
 });

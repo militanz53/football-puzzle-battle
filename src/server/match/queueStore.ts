@@ -1,6 +1,6 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { QueueEntry, QueueStatus, QueueStore } from "./queue";
+import type { QueueEntry, QueueMode, QueueStatus, QueueStore } from "./queue";
 
 // The match_queue table (supabase/migrations/…_match_queue.sql), secret key only.
 // Pairing is the claim_queue_partner SQL function: it locks both rows in one
@@ -17,6 +17,8 @@ interface QueueRow {
   match_id: string | null;
   resolved_at: string | null;
   nickname: string | null;
+  mode: QueueMode;
+  user_id: string | null;
 }
 
 const toEntry = (row: QueueRow): QueueEntry => ({
@@ -28,9 +30,14 @@ const toEntry = (row: QueueRow): QueueEntry => ({
   matchId: row.match_id,
   resolvedAt: row.resolved_at ? Date.parse(row.resolved_at) : null,
   nickname: row.nickname,
+  mode: row.mode,
+  userId: row.user_id,
 });
 
-const COLUMNS = "id, session_id, status, search_until, paired_with, match_id, resolved_at, nickname";
+/** Older than any freshness window. */
+const NEVER_SEEN = new Date(0).toISOString();
+
+const COLUMNS = "id, session_id, status, search_until, paired_with, match_id, resolved_at, nickname, mode, user_id";
 
 function fail(action: string, error: { message: string; code?: string }): never {
   throw new Error(`Could not ${action}: ${error.message}${error.code ? ` (${error.code})` : ""}`);
@@ -39,9 +46,19 @@ function fail(action: string, error: { message: string; code?: string }): never 
 export function supabaseQueueStore(db: Pick<SupabaseClient, "from" | "rpc">): QueueStore {
   const table = () => db.from(QUEUE_TABLE);
   return {
-    async insert(sessionId, searchUntil, nickname) {
+    async insert(sessionId, searchUntil, nickname, userId) {
       const { data, error } = await table()
-        .insert({ session_id: sessionId, search_until: new Date(searchUntil).toISOString(), nickname })
+        .insert({
+          session_id: sessionId,
+          search_until: new Date(searchUntil).toISOString(),
+          nickname,
+          // Not yet seen: only the first poll (touch) makes the entry one others can be
+          // paired with. A search the screen dropped straight away (a closed tab, or React
+          // running effects twice in development) then never pairs anyone with a ghost.
+          last_seen_at: NEVER_SEEN,
+          // Quick Match leaves both to their defaults (mode quick, no account).
+          ...(userId ? { mode: "ranked", user_id: userId } : {}),
+        })
         .select(COLUMNS)
         .single();
       if (error) fail("join the queue", error);

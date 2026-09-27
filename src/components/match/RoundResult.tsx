@@ -5,6 +5,7 @@ import type { RoundRecord } from "@/game/match";
 import type { Side, SideState } from "@/game/round";
 import { PuzzleRecap } from "@/components/puzzles/PuzzleBoard";
 import { play } from "@/components/sound/player";
+import type { RankedView } from "@/server/match/view";
 import { Scoreboard } from "./Scoreboard";
 
 const COUNT_STEPS = 12;
@@ -94,9 +95,11 @@ export function RoundResult({
   delayMs,
   onNext,
   opponentName,
+  ranked = null,
 }: {
   record: RoundRecord;
   opponentName: string;
+  ranked?: RankedView | null;
   totals: Record<Side, number>;
   nextLabel: string;
   delayMs: number;
@@ -111,7 +114,7 @@ export function RoundResult({
 
   return (
     <>
-      <Scoreboard totals={totals} player={player} bot={bot} suddenDeath={suddenDeath} opponentName={opponentName} />
+      <Scoreboard totals={totals} player={player} bot={bot} suddenDeath={suddenDeath} opponentName={opponentName} ranked={ranked} />
 
       <section className="flex flex-1 flex-col items-center text-center" aria-live="polite">
         <div

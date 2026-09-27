@@ -75,6 +75,7 @@ describe("match_queue (claim_queue_partner)", () => {
   const join = async (session: string) => {
     const entry = await store().insert(session, Date.now() + 20_000, "Player_0001");
     entries.push(entry.id);
+    await store().touch(entry.id); // its screen polled once: now it can be paired
     return entry;
   };
   afterAll(async () => {
@@ -98,6 +99,13 @@ describe("match_queue (claim_queue_partner)", () => {
     const second = await join("it-session-same");
     expect(await store().claimPartner(second.id, 5)).toBeNull();
     expect((await store().get(first.id))?.status).toBe("waiting");
+  });
+
+  it("never pairs with a search whose screen has not polled yet", async () => {
+    const entry = await store().insert("it-session-new", Date.now() + 20_000, "Player_0001");
+    entries.push(entry.id);
+    const other = await join("it-session-other");
+    expect(await store().claimPartner(other.id, 5)).toBeNull();
   });
 
   it("skips a player whose screen stopped polling", async () => {

@@ -3,8 +3,9 @@ import { seeded } from "@/game/__fixtures__/seeded";
 import { fakeSupabase, fakeTable } from "@/test/fakeSupabase";
 import { loadSnapshot } from "@/test/snapshot";
 import { checkIn, createMatch, MatchAccessError, type MatchDeps, MatchNotFoundError, runOnMatch } from "./runner";
-import { buzz, LEAVE_AFTER_MS, START_GRACE_MS, startRound } from "./service";
+import { buzz, LEAVE_AFTER_MS, requestRematch, START_GRACE_MS, startRound } from "./service";
 import { findActiveRealMatch } from "./store";
+import type { RankedResult } from "./ranked";
 import type { MatchView } from "./view";
 
 // The runner against an in-memory `matches` table (secret key). No network.
@@ -22,6 +23,7 @@ function setup() {
     rng: seeded(5),
     loadPool: async () => loadSnapshot(),
     broadcast: vi.fn(async (view: MatchView) => void sent.push(view)),
+    settleRanked: vi.fn(async (_id: string, result: RankedResult) => result),
   };
   return { table, deps, sent, advance: (ms: number) => (now += ms) };
 }
@@ -169,5 +171,92 @@ describe("resuming a real-player match after a reload", () => {
     table.rows.find((r) => r.id === real.id)!.status = "over";
     expect(await findActiveRealMatch("sb", T0, deps.db)).toBeNull();
     expect(bot.id).toBeDefined();
+  });
+});
+
+describe("a ranked match (§13.5, §14)", () => {
+  const PLAYERS = {
+    a: { session: "sa", name: "Kadir", account: { userId: "user-a", rating: 1390 } },
+    b: { session: "sb", name: "Deniz", account: { userId: "user-b", rating: 1410 } },
+    since: T0,
+  };
+  const RANKED = { opponentKind: "human" as const, queueEntryId: null, playerSession: "sa", opponentSession: "sb", ranked: true };
+
+  /** Seat b goes silent, so seat a wins by forfeit: the quickest way to a finished match. */
+  async function playToTheEnd(deps: MatchDeps, advance: (ms: number) => number, id: string) {
+    await runOnMatch(id, startRound, deps, "sa");
+    advance(START_GRACE_MS + LEAVE_AFTER_MS + 1_000);
+    return (await checkIn(id, "sa", deps))!;
+  }
+
+  it("is stored as ranked and shows both usernames and ratings, never nicknames", async () => {
+    const { deps, table } = setup();
+    const view = await createMatch(deps, "Deniz", RANKED, PLAYERS);
+    expect(table.rows[0]).toMatchObject({ mode: "ranked", opponent_kind: "human" });
+    expect(view.ranked).toEqual({
+      you: { username: "Kadir", rating: 1390, tier: "Pro" },
+      opponent: { username: "Deniz", rating: 1410, tier: "Elite" },
+      change: null,
+    });
+    const forB = await runOnMatch(view.id, startRound, deps, "sb");
+    expect(forB.ranked?.you.username).toBe("Deniz");
+    expect(forB.ranked?.opponent).toEqual({ username: "Kadir", rating: 1390, tier: "Pro" });
+    expect(forB.rematch).toBe("queue");
+  });
+
+  it("updates both ratings by Elo once it is over, and tells each player their own change", async () => {
+    const { deps, advance, sent } = setup();
+    const { id } = await createMatch(deps, "Deniz", RANKED, PLAYERS);
+    const view = await playToTheEnd(deps, advance, id);
+    expect(view.match.winner).toBe("player");
+    expect(deps.settleRanked).toHaveBeenCalledTimes(1);
+    expect(deps.settleRanked).toHaveBeenCalledWith(id, {
+      a: { before: 1390, after: 1407, delta: 17 },
+      b: { before: 1410, after: 1393, delta: -17 },
+    });
+    // 1390 → 1407 crosses into ELITE: the result screen says rank up.
+    expect(view.ranked?.change).toEqual({ before: 1390, after: 1407, delta: 17, tierBefore: "Pro", tierAfter: "Elite" });
+    const forB = sent.filter((v) => v.channel.endsWith(":b")).at(-1)!;
+    expect(forB.ranked?.change).toEqual({ before: 1410, after: 1393, delta: -17, tierBefore: "Elite", tierAfter: "Pro" });
+  });
+
+  it("does not settle again once the result is stored", async () => {
+    const { deps, advance, table } = setup();
+    const { id } = await createMatch(deps, "Deniz", RANKED, PLAYERS);
+    const over = await playToTheEnd(deps, advance, id);
+    table.rows[0].ranked_result = { a: over.ranked!.change, b: { before: 1410, after: 1393, delta: -17 } }; // as the SQL function stored it
+    await runOnMatch(id, (r) => ({ record: r, changed: false }), deps, "sb");
+    expect(deps.settleRanked).toHaveBeenCalledTimes(1);
+  });
+
+  it("tries again later if updating the ratings failed", async () => {
+    const { deps, advance } = setup();
+    const { id } = await createMatch(deps, "Deniz", RANKED, PLAYERS);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.mocked(deps.settleRanked).mockRejectedValueOnce(new Error("db down"));
+    const over = await playToTheEnd(deps, advance, id);
+    expect(over.ranked?.change).toBeNull();
+    const later = await runOnMatch(id, (r) => ({ record: r, changed: false }), deps, "sa");
+    expect(later.ranked?.change?.delta).toBe(17);
+    expect(deps.settleRanked).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
+  it("offers no rematch against the same player", async () => {
+    const { deps, advance } = setup();
+    const { id } = await createMatch(deps, "Deniz", RANKED, PLAYERS);
+    await playToTheEnd(deps, advance, id);
+    const view = await runOnMatch(id, (r, c, seat) => requestRematch(r, c.now, seat), deps, "sa");
+    expect(view.rematchOffer).toBeNull();
+  });
+
+  it("leaves Quick Match untouched: no ranked info, no settling", async () => {
+    const { deps, advance } = setup();
+    const quick = { a: { session: "sa", name: "Emre_34" }, b: { session: "sb", name: "Can2004" }, since: T0 };
+    const { id } = await createMatch(deps, "Can2004", { opponentKind: "human", queueEntryId: null, playerSession: "sa", opponentSession: "sb" }, quick);
+    const view = await playToTheEnd(deps, advance, id);
+    expect(view.ranked).toBeNull();
+    expect(view.rematch).toBe("mutual");
+    expect(deps.settleRanked).not.toHaveBeenCalled();
   });
 });

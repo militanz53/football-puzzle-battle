@@ -8,7 +8,7 @@ import type { Puzzle } from "@/game/types";
 import { PUZZLE_LABEL, PuzzleBoard } from "@/components/puzzles/PuzzleBoard";
 import { roundCues } from "@/components/sound/cues";
 import { play } from "@/components/sound/player";
-import type { PublicRound } from "@/server/match/view";
+import type { PublicRound, RankedView } from "@/server/match/view";
 import { displayStage } from "./display";
 import { Scoreboard } from "./Scoreboard";
 
@@ -260,9 +260,11 @@ export function RoundPlay({
   onBuzz,
   onSubmit,
   opponentName,
+  ranked = null,
 }: {
   /** Shown wherever the opponent is named (§13.1). */
   opponentName: string;
+  ranked?: RankedView | null;
   /** Without its answer while the round runs (src/server/match/view.ts). */
   puzzle: Puzzle;
   round: PublicRound;
@@ -289,7 +291,7 @@ export function RoundPlay({
 
   return (
     <>
-      <Scoreboard totals={totals} player={round.player} bot={round.bot} suddenDeath={suddenDeath} opponentName={opponentName} />
+      <Scoreboard totals={totals} player={round.player} bot={round.bot} suddenDeath={suddenDeath} opponentName={opponentName} ranked={ranked} />
 
       {/* data-puzzle-* let the E2E tests look up the puzzle; the answer is never in the DOM. */}
       <section

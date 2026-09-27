@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
-import { findOpponent, pollOpponent, resumeMatch, stopSearching } from "@/app/match/actions";
+import { findOpponent, findRankedOpponent, pollOpponent, resumeMatch, stopSearching } from "@/app/match/actions";
 import type { NameEntry } from "@/data/names";
 import type { MatchView } from "@/server/match/view";
 import { MatchScreen } from "./MatchScreen";
@@ -16,7 +17,11 @@ type Phase =
   | { kind: "searching" }
   | { kind: "found"; view: MatchView }
   | { kind: "playing"; view: MatchView }
+  /** Ranked only: nobody else was searching (no bot in Ranked). */
+  | { kind: "no-opponent" }
   | { kind: "error" };
+
+export type MatchMode = "quick" | "ranked";
 
 function Ball() {
   return (
@@ -33,7 +38,7 @@ function Ball() {
   );
 }
 
-function Searching() {
+function Searching({ mode }: { mode: MatchMode }) {
   const [seconds, setSeconds] = useState(0);
   useEffect(() => {
     const timer = window.setInterval(() => setSeconds((s) => s + 1), 1000);
@@ -53,12 +58,12 @@ function Searching() {
       <p className="mt-2 font-display text-sm font-semibold tabular-nums text-text-secondary">
         {Math.floor(seconds / 60)}:{String(seconds % 60).padStart(2, "0")}
       </p>
-      <p className="mt-1 text-sm text-text-muted">Quick Match · 5 rounds</p>
+      <p className="mt-1 text-sm text-text-muted">{mode === "ranked" ? "Ranked" : "Quick Match"} · 5 rounds</p>
     </>
   );
 }
 
-function Found({ name }: { name: string }) {
+function Found({ name, ranked }: { name: string; ranked: MatchView["ranked"] }) {
   return (
     <>
       <div className="grid h-20 w-20 place-items-center rounded-full border border-accent bg-accent/10 font-display text-3xl font-bold text-accent motion-safe:animate-pop">
@@ -66,6 +71,11 @@ function Found({ name }: { name: string }) {
       </div>
       <p className="mt-6 font-display text-xs font-semibold uppercase tracking-widest text-accent">Opponent found</p>
       <h1 className="mt-1 font-display text-3xl font-bold">{name}</h1>
+      {ranked && (
+        <p className="mt-1 font-display text-sm font-semibold uppercase tracking-wider text-text-secondary">
+          {ranked.opponent.tier} · <span className="tabular-nums">{ranked.opponent.rating}</span>
+        </p>
+      )}
       <p className="mt-2 text-sm text-text-secondary">Get ready…</p>
     </>
   );
@@ -75,8 +85,11 @@ function Found({ name }: { name: string }) {
  * Quick Match (GDD §13.1): PLAY puts the player in the server's queue, this screen
  * polls until the server hands over a match (a real opponent, or after the search
  * window the engine's opponent under a nickname), shows who was found, then plays.
+ * With mode "ranked" (§13.5) it searches the ranked lane as the signed-in account,
+ * and a search that finds nobody ends with "No opponents found" instead of the bot.
  */
-export function QuickMatch({ names }: { names: NameEntry[] }) {
+export function QuickMatch({ names, mode = "quick" }: { names: NameEntry[]; mode?: MatchMode }) {
+  const router = useRouter();
   const [phase, setPhase] = useState<Phase>({ kind: "searching" });
   /** Bumped to search again (a rematch offer nobody answered). */
   const [search, setSearch] = useState(0);
@@ -103,7 +116,11 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
           return;
         }
       }
-      const joined = await findOpponent();
+      const joined = mode === "ranked" ? await findRankedOpponent() : await findOpponent();
+      if ("signedOut" in joined) {
+        router.replace("/account?next=/ranked");
+        return;
+      }
       entryId = joined.entryId;
       // Unmounted while joining (e.g. React re-running effects in development): leave.
       if (cancelled) return void stopSearching(joined.entryId);
@@ -115,6 +132,11 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
           setPhase({ kind: "found", view: result.view });
           return;
         }
+        if (result.status === "no-opponent") {
+          settled = true;
+          setPhase({ kind: "no-opponent" });
+          return;
+        }
         if (result.status === "gone") throw new Error("Queue entry was closed");
         await new Promise((r) => window.setTimeout(r, POLL_MS));
       }
@@ -124,7 +146,7 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
       cancelled = true;
       if (entryId && !settled) void stopSearching(entryId).catch(() => {});
     };
-  }, [search]);
+  }, [search, mode, router]);
 
   useEffect(() => {
     if (phase.kind !== "found") return;
@@ -147,8 +169,23 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
   return (
     <main className="flex flex-1 justify-center px-5">
       <div className="flex w-full max-w-[390px] flex-col items-center justify-center py-16 text-center" role="status" aria-live="polite">
-        {phase.kind === "searching" && <Searching />}
-        {phase.kind === "found" && <Found name={phase.view.opponentName} />}
+        {phase.kind === "searching" && <Searching mode={mode} />}
+        {phase.kind === "found" && <Found name={phase.view.opponentName} ranked={phase.view.ranked} />}
+        {phase.kind === "no-opponent" && (
+          <>
+            <h1 className="font-display text-2xl font-bold">No opponents found</h1>
+            <p className="mt-2 max-w-[17rem] text-sm text-text-secondary">
+              Nobody else is looking for a ranked match right now. Try again in a moment.
+            </p>
+            <button
+              type="button"
+              onClick={searchAgain}
+              className="mt-8 h-14 w-full rounded-2xl bg-accent font-display text-lg font-bold uppercase tracking-wider text-bg-primary shadow-[0_8px_32px_-8px_rgba(62,213,152,0.55)] transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              Try again
+            </button>
+          </>
+        )}
         {phase.kind === "error" && (
           <>
             <h1 className="font-display text-2xl font-bold">Could not find a match</h1>
@@ -160,7 +197,7 @@ export function QuickMatch({ names }: { names: NameEntry[] }) {
             href="/"
             className="mt-10 rounded-2xl px-6 py-3 font-display text-sm font-semibold uppercase tracking-widest text-text-secondary transition-colors hover:text-text-primary"
           >
-            {phase.kind === "error" ? "Back to menu" : "Cancel"}
+            {phase.kind === "searching" ? "Cancel" : "Back to menu"}
           </Link>
         )}
       </div>

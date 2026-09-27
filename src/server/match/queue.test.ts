@@ -4,6 +4,7 @@ import {
   FRESH_SECONDS,
   HANDOFF_MS,
   joinQueue,
+  joinRankedQueue,
   leaveQueue,
   pollQueue,
   QueueAccessError,
@@ -22,9 +23,20 @@ function memoryStore(clock: { now: number }) {
   const rows = new Map<string, QueueEntry & { lastSeen: number; createdAt: number }>();
   let n = 0;
   const store: QueueStore = {
-    async insert(sessionId, searchUntil, nickname) {
-      const entry: QueueEntry = { id: `q${++n}`, sessionId, status: "waiting", searchUntil, pairedWith: null, matchId: null, resolvedAt: null, nickname };
-      rows.set(entry.id, { ...entry, lastSeen: clock.now, createdAt: clock.now + n });
+    async insert(sessionId, searchUntil, nickname, userId) {
+      const entry: QueueEntry = {
+        id: `q${++n}`,
+        sessionId,
+        status: "waiting",
+        searchUntil,
+        pairedWith: null,
+        matchId: null,
+        resolvedAt: null,
+        nickname,
+        mode: userId ? "ranked" : "quick",
+        userId: userId ?? null,
+      };
+      rows.set(entry.id, { ...entry, lastSeen: -Infinity, createdAt: clock.now + n }); // fresh once it polls, like the table
       return entry;
     },
     async get(id) {
@@ -43,6 +55,7 @@ function memoryStore(clock: { now: number }) {
       if (!me || me.status !== "waiting") return null;
       const partner = [...rows.values()]
         .filter((r) => r.status === "waiting" && r.id !== id && r.sessionId !== me.sessionId)
+        .filter((r) => r.mode === me.mode && (me.userId === null || r.userId !== me.userId))
         .filter((r) => r.lastSeen > clock.now - freshSeconds * 1000 && r.searchUntil > clock.now)
         .sort((a, b) => a.createdAt - b.createdAt)[0];
       if (!partner) return null;
@@ -71,7 +84,7 @@ function setup() {
   const clock = { now: 1_750_000_000_000 };
   const { store, rows } = memoryStore(clock);
   const created: { opponentName: string; queueEntryId: string }[] = [];
-  const realMatches: { a: string; b: string; names: [string, string] }[] = [];
+  const realMatches: { a: string; b: string; names: [string, string]; mode: string; users: [string | null, string | null] }[] = [];
   const deps: QueueDeps = {
     store,
     now: () => clock.now,
@@ -80,8 +93,8 @@ function setup() {
       created.push({ opponentName, queueEntryId });
       return { id: `m-${queueEntryId}`, opponentName } as MatchView;
     }),
-    createRealMatch: vi.fn(async (a, b) => {
-      realMatches.push({ a: a.sessionId, b: b.sessionId, names: [a.name, b.name] });
+    createRealMatch: vi.fn(async (a, b, mode) => {
+      realMatches.push({ a: a.sessionId, b: b.sessionId, names: [a.name, b.name], mode, users: [a.userId, b.userId] });
       return { id: `real-${realMatches.length}`, opponentName: b.name } as MatchView;
     }),
     viewMatch: vi.fn(async (matchId) => ({ id: matchId }) as MatchView),
@@ -129,6 +142,7 @@ describe("Quick Match queue", () => {
   it("pairs two players who search at the same time into ONE match against each other", async () => {
     const { deps, rows, created, realMatches, wait } = setup();
     const a = await joinQueue("alice", "Alice_1", deps);
+    expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "searching" });
     wait(500);
     const b = await joinQueue("bob", "Bob_2", deps);
     // Bob's poll pairs them; Alice's entry (the smaller id) builds the match, Bob waits for it.
@@ -140,14 +154,15 @@ describe("Quick Match queue", () => {
     const forBob = await pollQueue(b.id, "bob", deps);
     expect(forAlice).toMatchObject({ status: "found", view: { id: "real-1" } });
     expect(forBob).toMatchObject({ status: "found", view: { id: "real-1" } });
-    expect(realMatches).toEqual([{ a: "alice", b: "bob", names: ["Alice_1", "Bob_2"] }]); // their own nicknames
+    expect(realMatches).toEqual([{ a: "alice", b: "bob", names: ["Alice_1", "Bob_2"], mode: "quick", users: [null, null] }]); // their own nicknames
     expect(created).toEqual([]); // no bot match for either
     expect([rows.get(a.id)?.matchId, rows.get(b.id)?.matchId]).toEqual(["real-1", "real-1"]);
   });
 
   it("falls back to the bot if the shared match never arrives", async () => {
     const { deps, created, realMatches, wait } = setup();
-    await joinQueue("alice", "Alice_1", deps); // pairs, then Alice's tab closes before she builds the match
+    const a = await joinQueue("alice", "Alice_1", deps); // pairs, then Alice's tab closes before she builds the match
+    await pollQueue(a.id, "alice", deps);
     const b = await joinQueue("bob", "Bob_2", deps);
     expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });
     wait(HANDOFF_MS - 1_000);
@@ -156,6 +171,15 @@ describe("Quick Match queue", () => {
     expect((await pollQueue(b.id, "bob", deps)).status).toBe("found");
     expect(realMatches).toEqual([]);
     expect(created).toHaveLength(1);
+  });
+
+  it("never pairs anyone with a search whose screen never polled (a dropped search)", async () => {
+    const { deps, rows, realMatches } = setup();
+    const ghost = await joinQueue("alice", "Alice_1", deps); // e.g. React ran the effect twice and dropped this one
+    const b = await joinQueue("bob", "Bob_2", deps);
+    expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });
+    expect(rows.get(ghost.id)?.status).toBe("waiting");
+    expect(realMatches).toEqual([]);
   });
 
   it("never pairs a player with their own other tab", async () => {
@@ -193,5 +217,70 @@ describe("Quick Match queue", () => {
     await expect(pollQueue(a.id, "mallory", deps)).rejects.toBeInstanceOf(QueueAccessError);
     await expect(leaveQueue(a.id, "mallory", deps)).rejects.toBeInstanceOf(QueueAccessError);
     await expect(pollQueue("nope", "alice", deps)).rejects.toBeInstanceOf(QueueAccessError);
+  });
+});
+
+describe("Ranked queue (§13.5)", () => {
+  const ALICE = { userId: "user-alice", username: "Alice" };
+  const BOB = { userId: "user-bob", username: "Bob" };
+
+  it("pairs two ranked players into one ranked match, by username and account", async () => {
+    const { deps, rows, created, realMatches, wait } = setup();
+    const a = await joinRankedQueue("alice", ALICE, deps);
+    wait(500);
+    const b = await joinRankedQueue("bob", BOB, deps);
+    expect(rows.get(a.id)).toMatchObject({ mode: "ranked", userId: "user-alice", nickname: "Alice" });
+    expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });
+    expect(await pollQueue(a.id, "alice", deps)).toMatchObject({ status: "found", view: { id: "real-1" } });
+    expect(await pollQueue(b.id, "bob", deps)).toMatchObject({ status: "found", view: { id: "real-1" } });
+    expect(realMatches).toEqual([{ a: "alice", b: "bob", names: ["Alice", "Bob"], mode: "ranked", users: ["user-alice", "user-bob"] }]);
+    expect(created).toEqual([]);
+  });
+
+  it("never gives a ranked player the bot: after the window there is simply no opponent", async () => {
+    const { deps, rows, created, wait } = setup();
+    const a = await joinRankedQueue("alice", ALICE, deps);
+    wait(SEARCH_MIN_MS - 1);
+    expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "searching" });
+    wait(SEARCH_MAX_MS);
+    expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "no-opponent" });
+    expect(await pollQueue(a.id, "alice", deps)).toEqual({ status: "no-opponent" }); // and stays so
+    expect(rows.get(a.id)).toMatchObject({ status: "timed_out", matchId: null });
+    expect(created).toEqual([]);
+  });
+
+  it("keeps the lanes apart: a ranked and a Quick Match player searching together are never paired", async () => {
+    const { deps, rows, created, realMatches, wait } = setup();
+    const ranked = await joinRankedQueue("alice", ALICE, deps);
+    const quick = await joinQueue("bob", "Bob_2", deps);
+    expect(await pollQueue(quick.id, "bob", deps)).toEqual({ status: "searching" });
+    expect(await pollQueue(ranked.id, "alice", deps)).toEqual({ status: "searching" });
+    expect([rows.get(ranked.id)?.status, rows.get(quick.id)?.status]).toEqual(["waiting", "waiting"]);
+
+    wait(SEARCH_MAX_MS + 1);
+    expect(await pollQueue(ranked.id, "alice", deps)).toEqual({ status: "no-opponent" });
+    expect((await pollQueue(quick.id, "bob", deps)).status).toBe("found"); // Quick Match as before: the bot
+    expect(created).toEqual([{ opponentName: expect.any(String), queueEntryId: quick.id }]);
+    expect(realMatches).toEqual([]);
+  });
+
+  it("never pairs an account with itself on another browser", async () => {
+    const { deps, rows } = setup();
+    const a = await joinRankedQueue("laptop", ALICE, deps);
+    await pollQueue(a.id, "laptop", deps);
+    const b = await joinRankedQueue("phone", ALICE, deps);
+    expect(await pollQueue(b.id, "phone", deps)).toEqual({ status: "searching" });
+    expect(rows.get(a.id)?.status).toBe("waiting");
+  });
+
+  it("does not fall back to the bot when the shared ranked match never arrives", async () => {
+    const { deps, created, wait } = setup();
+    const a = await joinRankedQueue("alice", ALICE, deps); // pairs, then Alice's tab closes
+    await pollQueue(a.id, "alice", deps);
+    const b = await joinRankedQueue("bob", BOB, deps);
+    expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "searching" });
+    wait(HANDOFF_MS + 1);
+    expect(await pollQueue(b.id, "bob", deps)).toEqual({ status: "no-opponent" });
+    expect(created).toEqual([]);
   });
 });

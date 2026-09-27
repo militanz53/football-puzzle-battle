@@ -18,6 +18,8 @@ export interface FakeTable {
   log: { role: Role; op: string; filters: string[] }[];
   /** Makes the next request fail with this error. */
   failNext?: { code: string; message: string };
+  /** Unique keys besides `id` (e.g. lower(username)); a clash fails with 23505, like Postgres. */
+  unique?: ((row: Row) => unknown)[];
 }
 
 export function fakeTable(rows: Row[] = []): FakeTable {
@@ -64,6 +66,12 @@ class Query implements PromiseLike<Result> {
   }
   gte(column: string, value: string | number) {
     this.filters.push({ label: `${column}>=${value}`, test: (r) => String(r[column]) >= String(value) });
+    return this;
+  }
+  /** Case-insensitive match; only escaped wildcards (\_, \%), i.e. equality ignoring case. */
+  ilike(column: string, pattern: string) {
+    const wanted = pattern.replace(/\\(.)/g, "$1").toLowerCase();
+    this.filters.push({ label: `${column} ilike ${pattern}`, test: (r) => String(r[column]).toLowerCase() === wanted });
     return this;
   }
   /** PostgREST or(): only "column.eq.value" terms, comma-separated. */
@@ -121,11 +129,13 @@ class Query implements PromiseLike<Result> {
       case "insert": {
         const incoming = (Array.isArray(this.payload) ? this.payload : [this.payload]).map((r) => ({ ...r }));
         const ids = new Set(t.rows.map((r) => r.id));
+        const keys = (t.unique ?? []).map((key) => new Set(t.rows.map(key)));
         for (const r of incoming) {
-          if (ids.has(r.id)) {
+          if ((r.id !== undefined && ids.has(r.id)) || (t.unique ?? []).some((key, i) => keys[i].has(key(r)))) {
             return { data: null, error: { code: "23505", message: 'duplicate key value violates unique constraint "puzzles_pkey"' }, status: 409 };
           }
           ids.add(r.id);
+          (t.unique ?? []).forEach((key, i) => keys[i].add(key(r)));
         }
         t.rows.push(...incoming); // all-or-nothing, like one INSERT statement
         return { data: incoming, error: null, status: 201 };

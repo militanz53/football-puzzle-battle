@@ -2,6 +2,8 @@ import { totals, type MatchState, type RoundRecord } from "@/game/match";
 import type { RoundState, Side } from "@/game/round";
 import { msUntilNextChange } from "@/game/timeline";
 import type { Puzzle } from "@/game/types";
+import type { RatingChange } from "@/lib/account/elo";
+import { type RankTier, tierOf } from "@/lib/account/rank";
 import { matchChannel } from "@/lib/matchChannel";
 import {
   AWAY_AFTER_MS,
@@ -14,6 +16,7 @@ import {
   type MatchRecord,
   type Seat,
 } from "./service";
+import { isRanked } from "./ranked";
 
 // What a browser may know about a match. Sent by the Server Functions and over
 // Realtime. Everything here is safe to show: no bot plan, and no answer for a puzzle
@@ -39,14 +42,48 @@ export interface MatchView {
   channel: string;
   /** Set when the match ended because a player left: the opponent, or this viewer. */
   endedBecause: "opponent-left" | "you-left" | null;
-  /** Rematch: at once against the same opponent (the bot), or offered to a real opponent. */
-  rematch: "same-opponent" | "mutual";
+  /**
+   * Rematch: at once against the same opponent (the bot), offered to a real opponent,
+   * or, in Ranked, a new search (a rematch would let two players farm rating).
+   */
+  rematch: "same-opponent" | "mutual" | "queue";
   /** Rematch offers that stand (§13.1): made by this viewer, by the opponent, and time left. */
   rematchOffer: { you: boolean; opponent: boolean; expiresInMs: number } | null;
   /** Once both asked: the new match between the same two players. */
   rematchNext: string | null;
   /** The opponent has gone silent (§28): time left for them to reconnect. */
   opponentAway: { reconnectInMs: number } | null;
+  /** Ranked (§13.5, §14): both accounts as the match began, and this viewer's change once it is over. */
+  ranked: RankedView | null;
+}
+
+export interface RankedPlayer {
+  username: string;
+  /** The rating when the match was made. */
+  rating: number;
+  tier: RankTier;
+}
+
+export interface RankedView {
+  you: RankedPlayer;
+  opponent: RankedPlayer;
+  /** Set once the match is over and both ratings were updated. */
+  change: (RatingChange & { tierBefore: RankTier; tierAfter: RankTier }) | null;
+}
+
+function rankedView(record: MatchRecord, seat: Seat): RankedView | null {
+  const players = record.players;
+  if (!players || !isRanked(record)) return null;
+  const side = (s: Seat): RankedPlayer => {
+    const rating = players[s].account!.rating;
+    return { username: players[s].name, rating, tier: tierOf(rating) };
+  };
+  const mine = record.rankedResult?.[seat];
+  return {
+    you: side(seat),
+    opponent: side(otherSeat(seat)),
+    change: mine ? { ...mine, tierBefore: tierOf(mine.before), tierAfter: tierOf(mine.after) } : null,
+  };
 }
 
 /**
@@ -118,9 +155,10 @@ export function toView(record: MatchRecord, now: number, seat: Seat = "a", seen?
     opponentName: seat === "a" ? record.opponentName : (players?.a.name ?? record.opponentName),
     channel: matchChannel(record.id, seat),
     endedBecause: record.ended ? (record.ended.seat === seat ? "you-left" : "opponent-left") : null,
-    rematch: players ? "mutual" : "same-opponent",
+    rematch: isRanked(record) ? "queue" : players ? "mutual" : "same-opponent",
     rematchOffer: rematchOffer(record, now, seat),
     rematchNext: record.rematch?.next ?? null,
+    ranked: rankedView(record, seat),
     opponentAway: (() => {
       if (!players || !seen || match.status === "over") return null;
       const silent = silentFor(players, seen, otherSeat(seat), now);

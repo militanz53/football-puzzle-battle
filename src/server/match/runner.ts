@@ -5,8 +5,9 @@ import type { Puzzle } from "@/game/types";
 import { fetchPublishedPuzzles } from "@/data/puzzles";
 import { getServerSupabase } from "@/lib/supabase/server";
 import { broadcastMatchView } from "./broadcast";
+import { needsSettling, rankedResult, type RankedResult } from "./ranked";
 import { type Clock, forfeitIfGone, type MatchRecord, newMatchRecord, type Outcome, type Players, type Seat } from "./service";
-import { insertMatch, loadMatchWithPresence, type MatchOrigin, saveMatch, type Db, touchSeat } from "./store";
+import { insertMatch, loadMatchWithPresence, type MatchOrigin, saveMatch, settleRankedMatch, type Db, touchSeat } from "./store";
 import { toView, type MatchView } from "./view";
 
 // Runs a match rule against the stored match: load → apply (./service.ts) → save
@@ -19,6 +20,8 @@ export interface MatchDeps {
   rng: Rng;
   loadPool: () => Promise<Puzzle[]>;
   broadcast: (view: MatchView) => Promise<void>;
+  /** Applies a finished ranked match to both profiles, once (./store.ts settleRankedMatch). */
+  settleRanked: (matchId: string, result: RankedResult) => Promise<RankedResult | null>;
 }
 
 export function defaultDeps(): MatchDeps {
@@ -29,6 +32,7 @@ export function defaultDeps(): MatchDeps {
     rng: Math.random,
     loadPool: () => fetchPublishedPuzzles(),
     broadcast: (view) => broadcastMatchView(view, server),
+    settleRanked: (matchId, result) => settleRankedMatch(matchId, result, server),
   };
 }
 
@@ -78,6 +82,22 @@ async function publish(record: MatchRecord, now: number, deps: MatchDeps, seen?:
 }
 
 /**
+ * A ranked match that has just ended (or whose settling failed before): its rating
+ * changes go to both profiles, and the record carries them for the result screen.
+ * A failure here leaves the match as it is; the next request for it tries again.
+ */
+async function settleIfDue(record: MatchRecord, deps: MatchDeps): Promise<MatchRecord> {
+  if (!needsSettling(record)) return record;
+  try {
+    const stored = await deps.settleRanked(record.id, rankedResult(record)!);
+    return { ...record, rankedResult: stored };
+  } catch (e) {
+    console.warn(`Ratings for match ${record.id} were not updated yet: ${(e as Error).message}`);
+    return record;
+  }
+}
+
+/**
  * A new match: the server draws the five puzzles (§27). The first round starts on
  * startRound. `origin` is stored for statistics and never reaches the view.
  */
@@ -111,12 +131,13 @@ export async function runOnMatch(
     const seat = seatOf(stored, session);
     const clock: Clock = { now: deps.now(), rng: deps.rng };
     const { record, changed } = await rule(stored, clock, seat);
-    if (!changed) return toView(stored, clock.now, seat, loaded.seen);
+    if (!changed) return toView(await settleIfDue(stored, deps), clock.now, seat, loaded.seen);
 
     const next = { ...record, version: stored.version + 1 };
     if (await saveMatch(next, stored.version, clock.now, deps.db)) {
-      await publish(next, clock.now, deps, loaded.seen);
-      return toView(next, clock.now, seat, loaded.seen);
+      const settled = await settleIfDue(next, deps);
+      await publish(settled, clock.now, deps, loaded.seen);
+      return toView(settled, clock.now, seat, loaded.seen);
     }
   }
   throw new Error(`Match ${id} is changing too fast; try again.`);

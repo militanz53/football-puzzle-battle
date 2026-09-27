@@ -172,9 +172,12 @@ export function useServerMatch(
   const rematching = useRef(false);
   const [rematchState, setRematchState] = useState<RematchState>("idle");
   const mutual = view.rematch === "mutual";
+  const searchInstead = view.rematch === "queue";
   const rematch = useCallback(async () => {
     if (rematching.current) return; // ignore repeat taps
     rematching.current = true;
+    // Ranked: no rematch against the same player, a new search instead.
+    if (searchInstead) return onSearchAgain();
     if (!mutual) {
       try {
         await call(() => rematchAction(id), true);
@@ -191,7 +194,7 @@ export function useServerMatch(
     } catch {
       setRematchState("declined");
     }
-  }, [mutual, call, id, accept, onOpenMatch]);
+  }, [mutual, searchInstead, call, id, accept, onOpenMatch, onSearchAgain]);
 
   // The opponent accepted: open the new match.
   const nextId = view.rematchNext;

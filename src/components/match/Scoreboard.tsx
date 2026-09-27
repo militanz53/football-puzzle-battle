@@ -1,4 +1,5 @@
 import type { Side, SideState } from "@/game/round";
+import type { RankedView } from "@/server/match/view";
 
 function statusText(side: SideState, showPoints: boolean): { text: string; active: boolean } {
   switch (side.kind) {
@@ -17,6 +18,7 @@ function statusText(side: SideState, showPoints: boolean): { text: string; activ
 
 function Player({
   name,
+  rating,
   score,
   leading,
   level,
@@ -26,6 +28,8 @@ function Player({
   testSide,
 }: {
   name: string;
+  /** Ranked: the rating this player brought into the match. */
+  rating?: number;
   score: number;
   leading: boolean;
   level: boolean;
@@ -52,7 +56,11 @@ function Player({
         {name[0]?.toLocaleUpperCase("tr")}
       </span>
       <div className="min-w-0">
-        <p className="truncate font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted">{name}</p>
+        <p className={`flex min-w-0 font-display text-[11px] font-semibold uppercase tracking-widest text-text-muted ${right ? "justify-end" : ""}`}>
+          <span className="truncate">{name}</span>
+          {/* The rating always shows; a long name gives way instead. */}
+          {rating !== undefined && <span className="shrink-0 tabular-nums text-text-muted-2">&nbsp;· {rating}</span>}
+        </p>
         <p data-score key={score} className={`font-display text-2xl font-bold leading-tight tabular-nums motion-safe:animate-pop ${scoreColour}`}>
           {score}
         </p>
@@ -77,7 +85,10 @@ export function Scoreboard({
   bot,
   suddenDeath = false,
   opponentName,
+  ranked = null,
 }: {
+  /** Ranked: both usernames and ratings replace "You" and the nickname. */
+  ranked?: RankedView | null;
   totals: Record<Side, number>;
   player?: SideState;
   bot?: SideState;
@@ -88,9 +99,9 @@ export function Scoreboard({
   const level = totals.player === totals.bot;
   return (
     <header className="flex items-center justify-between gap-2">
-      <Player name="You" score={totals.player} leading={totals.player > totals.bot} level={level} side={player} align="left" showPoints={!suddenDeath} testSide="player" />
+      <Player name={ranked?.you.username ?? "You"} rating={ranked?.you.rating} score={totals.player} leading={totals.player > totals.bot} level={level} side={player} align="left" showPoints={!suddenDeath} testSide="player" />
       <span className="font-display text-xs font-bold tracking-widest text-text-muted-2">VS</span>
-      <Player name={opponentName} score={totals.bot} leading={totals.bot > totals.player} level={level} side={bot} align="right" showPoints={!suddenDeath} testSide="opponent" />
+      <Player name={opponentName} rating={ranked?.opponent.rating} score={totals.bot} leading={totals.bot > totals.player} level={level} side={bot} align="right" showPoints={!suddenDeath} testSide="opponent" />
     </header>
   );
 }

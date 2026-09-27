@@ -5,6 +5,8 @@ import { useEffect } from "react";
 import { play } from "@/components/sound/player";
 import { playerStats, totals, type MatchState } from "@/game/match";
 import { PUZZLE_LABEL } from "@/components/puzzles/PuzzleBoard";
+import { tierIndex } from "@/lib/account/rank";
+import type { RankedView } from "@/server/match/view";
 
 const seconds = (ms: number | null) => (ms === null ? "—" : `${(ms / 1000).toFixed(1)}s`);
 
@@ -17,6 +19,43 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
+/**
+ * Ranked (§14): the rating change, and a "Rank up!" moment when it crossed into a
+ * higher tier (§22: the same pop-in as the headline). Shown once the server has
+ * updated both profiles.
+ */
+function RatingChange({ ranked }: { ranked: RankedView }) {
+  const change = ranked.change;
+  if (!change) {
+    return <p className="mt-5 text-center font-display text-xs font-semibold uppercase tracking-widest text-text-muted">Updating rating…</p>;
+  }
+  const up = tierIndex(change.tierAfter) > tierIndex(change.tierBefore);
+  const down = tierIndex(change.tierAfter) < tierIndex(change.tierBefore);
+  return (
+    <div data-rating-change className="mt-5 rounded-2xl border border-border-subtle bg-bg-surface px-4 py-3 text-center">
+      {up && (
+        <p className="font-display text-2xl font-bold uppercase tracking-tight text-accent motion-safe:animate-pop">Rank up!</p>
+      )}
+      <p className="font-display text-xs font-semibold uppercase tracking-widest text-text-muted">
+        {up || down ? (
+          <>
+            {change.tierBefore} → <span className={up ? "text-accent" : "text-text-primary"}>{change.tierAfter}</span>
+          </>
+        ) : (
+          change.tierAfter
+        )}
+      </p>
+      <p className="mt-1 font-display text-lg font-bold tabular-nums text-text-primary">
+        {change.before} → {change.after}{" "}
+        <span className={change.delta > 0 ? "text-accent" : "text-text-secondary"}>
+          ({change.delta > 0 ? "+" : ""}
+          {change.delta})
+        </span>
+      </p>
+    </div>
+  );
+}
+
 /** Match result (§12): totals, VICTORY/DEFEAT and the player's stats. */
 export function MatchResult({
   match,
@@ -25,7 +64,10 @@ export function MatchResult({
   onRematch,
   rematchState,
   opponentWantsRematch,
+  ranked = null,
 }: {
+  /** Ranked: the rating change replaces nothing, it is added under the headline. */
+  ranked?: RankedView | null;
   match: MatchState;
   opponentName: string;
   /** Set when a player left before the end (a real-player match). */
@@ -66,6 +108,7 @@ export function MatchResult({
             {suddenDeathRounds > 1 ? ` · ${suddenDeathRounds} rounds` : ""}
           </p>
         )}
+        {ranked && <RatingChange ranked={ranked} />}
       </div>
 
       <div className="mt-7">
@@ -117,7 +160,7 @@ export function MatchResult({
           disabled={rematchState !== "idle"}
           className="h-14 w-full rounded-2xl bg-accent font-display text-lg font-bold uppercase tracking-wider text-bg-primary transition-colors hover:bg-accent-hover focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent disabled:cursor-default disabled:opacity-70"
         >
-          {rematchState === "waiting" ? `Waiting for ${opponentName}…` : "Rematch"}
+          {ranked ? "Play again" : rematchState === "waiting" ? `Waiting for ${opponentName}…` : "Rematch"}
         </button>
         <Link
           href="/"

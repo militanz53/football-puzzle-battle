@@ -1,11 +1,14 @@
 // Main Menu — GDD §21 (first prototype: PLAY, PRACTICE, HOW TO PLAY) styled per §22.
-// QUICK MATCH opens the 5-round match; PRACTICE and HOW TO PLAY are still inert.
+// QUICK MATCH opens the 5-round match, RANKED the ranked one (§13.5, account needed);
+// PRACTICE and HOW TO PLAY are still inert.
 
 import Image from "next/image";
 import Link from "next/link";
+import { AccountChip } from "@/components/menu/AccountChip";
 import { MenuLobby } from "@/components/menu/MenuLobby";
 import { SoundToggle } from "@/components/sound/SoundToggle";
 import { randomPlayerName } from "@/lib/nickname";
+import { currentAccount } from "@/lib/account/auth";
 import { readIdentity } from "@/lib/session";
 import stadium from "../../public/images/stadium-bg.png";
 
@@ -66,13 +69,14 @@ function Logo() {
 }
 
 export default async function MainMenu() {
-  // The nickname lives in the session cookie, so the menu renders per request.
-  const identity = await readIdentity();
+  // The nickname and the account live in cookies, so the menu renders per request.
+  const [identity, account] = await Promise.all([readIdentity(), currentAccount()]);
   return (
     <main className="relative isolate flex flex-1 justify-center overflow-hidden px-4">
       <Backdrop />
       <div className="relative flex w-full max-w-[390px] flex-col py-5">
-        <div className="flex justify-end">
+        <div className="flex items-center justify-between gap-3">
+          <AccountChip account={account} />
           <SoundToggle />
         </div>
         <div className="flex flex-1 items-center justify-center pb-5 pt-1">
@@ -89,12 +93,21 @@ export default async function MainMenu() {
           >
             Quick Match
           </Link>
-          <button
-            type="button"
-            className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
-          >
-            Practice
-          </button>
+          <div className="grid grid-cols-2 gap-3">
+            {/* Signed out, /ranked sends the player to the account screen first. */}
+            <Link
+              href="/ranked"
+              className="grid h-14 w-full place-items-center rounded-2xl border border-accent/50 bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-accent backdrop-blur-sm transition-colors hover:border-accent hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              Ranked
+            </Link>
+            <button
+              type="button"
+              className="h-14 w-full rounded-2xl border border-border-subtle bg-bg-primary/60 font-display text-base font-semibold uppercase tracking-wider text-text-primary backdrop-blur-sm transition-colors hover:border-text-muted-2 hover:bg-bg-surface focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
+            >
+              Practice
+            </button>
+          </div>
           <button
             type="button"
             className="mx-auto mt-1 px-3 py-2 font-display text-xs font-semibold uppercase tracking-widest text-text-secondary underline decoration-text-muted-2 underline-offset-4 transition-colors hover:text-text-primary focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
